@@ -532,6 +532,138 @@ async def health_check():
     """Endpoint de verificação de saúde"""
     return {"status": "healthy", "service": "CM² Text-to-CAD"}
 
+# Models para as novas funcionalidades de edição
+class LoadForEditingRequest(BaseModel):
+    session_id: str
+    file_path: Optional[str] = None
+
+class EditCodeRequest(BaseModel):
+    session_id: str
+    operation_id: str
+    new_code: str
+    auto_regenerate: bool = True
+
+class UpdateParametersRequest(BaseModel):
+    session_id: str
+    parameter_updates: Dict[str, Any]
+    auto_regenerate: bool = True
+
+class CreateCheckpointRequest(BaseModel):
+    session_id: str
+    description: Optional[str] = None
+
+class RollbackRequest(BaseModel):
+    session_id: str
+    checkpoint_id: str
+
+class ValidateEditRequest(BaseModel):
+    session_id: str
+    edited_code: Optional[str] = None
+    parameter_updates: Optional[Dict[str, Any]] = None
+
+# Endpoints para funcionalidades de edição
+@app.post("/api/edit/load")
+async def load_for_editing(request: LoadForEditingRequest):
+    """Carrega uma geração anterior para edição"""
+    try:
+        result = await orchestrator.load_for_editing(
+            request.session_id, 
+            request.file_path
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Erro ao carregar para edição: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/edit/code")
+async def edit_code_directly(request: EditCodeRequest):
+    """Edita código CadQuery diretamente"""
+    try:
+        result = await orchestrator.edit_code_directly(
+            request.session_id,
+            request.operation_id,
+            request.new_code,
+            request.auto_regenerate
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Erro na edição de código: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/edit/parameters")
+async def update_parameters_batch(request: UpdateParametersRequest):
+    """Atualiza múltiplos parâmetros de uma vez"""
+    try:
+        result = await orchestrator.update_parameters_batch(
+            request.session_id,
+            request.parameter_updates,
+            request.auto_regenerate
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Erro na atualização de parâmetros: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/edit/checkpoint")
+async def create_checkpoint(request: CreateCheckpointRequest):
+    """Cria um checkpoint de versão"""
+    try:
+        result = await orchestrator.create_checkpoint(
+            request.session_id,
+            request.description
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Erro ao criar checkpoint: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/edit/rollback")
+async def rollback_to_checkpoint(request: RollbackRequest):
+    """Faz rollback para um checkpoint específico"""
+    try:
+        result = await orchestrator.rollback_to_checkpoint(
+            request.session_id,
+            request.checkpoint_id
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Erro no rollback: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/edit/history/{session_id}")
+async def get_edit_history(session_id: str):
+    """Retorna histórico de edições da sessão"""
+    try:
+        result = await orchestrator.get_edit_history(session_id)
+        return result
+    except Exception as e:
+        logger.error(f"Erro ao obter histórico: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/edit/content/{session_id}")
+async def get_editable_content(session_id: str):
+    """Retorna conteúdo editável atual da sessão"""
+    try:
+        result = await orchestrator.get_editable_content(session_id)
+        return result
+    except Exception as e:
+        logger.error(f"Erro ao obter conteúdo editável: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/edit/validate")
+async def validate_edit(request: ValidateEditRequest):
+    """Valida edições antes de aplicar"""
+    try:
+        result = await orchestrator.validate_edit(
+            request.session_id,
+            request.edited_code,
+            request.parameter_updates
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Erro na validação: {e}")
+        return {"success": False, "error": str(e)}
+
 if __name__ == "__main__":
     # Verificar variáveis de ambiente obrigatórias
     if not os.getenv("GEMINI_API_KEY"):
