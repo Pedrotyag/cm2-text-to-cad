@@ -156,6 +156,19 @@ class PlanningModule:
         - .chamfer(distance, distance2) - Chanfro assimétrico
         - .mirror(mirrorPlane="XY"/"XZ"/"YZ") - Espelhar objeto
         - .mirror(mirrorPlane=(px,py,pz,nx,ny,nz)) - Espelhar em plano arbitrário
+        
+        ## FILETES SEGUROS - Melhores Práticas:
+        ```python
+        # MÉTODO SEGURO - Calcular raio máximo permitido
+        max_radius = min(height/2, (outer_diameter - inner_diameter)/4)
+        safe_radius = min(desired_radius, max_radius)
+        
+        # SELEÇÃO SEGURA - Usar .edges() sem seletor específico
+        filleted_part = base_part.edges().fillet(safe_radius)
+        
+        # ALTERNATIVA - Selecionar por face primeiro
+        filleted_part = base_part.faces(">Z").edges().fillet(safe_radius)
+        ```
 
         ## Padrões e Arrays:
         - .rarray(xSpacing, ySpacing, xCount, yCount, centerLast=False) - Padrão retangular
@@ -211,14 +224,17 @@ class PlanningModule:
                  .sweep(wire_profile))
         ```
 
-        ## Seletores Avançados:
-        - ">X", "<X", ">Y", "<Y", ">Z", "<Z" - Faces nas direções cardinais
-        - ">X[1]" - Segunda face na direção +X
-        - "#Z" - Faces paralelas ao plano Z
-        - "%CIRCLE" - Faces circulares
-        - "%PLANE" - Faces planas
-        - "|X", "|Y", "|Z" - Arestas paralelas aos eixos
-        - ">X and >Y" - Combinação de seletores
+        ## Seletores Seguros e Confiáveis:
+        - ">X", "<X", ">Y", "<Y", ">Z", "<Z" - Faces nas direções cardinais (CONFIÁVEL)
+        - ">X[1]" - Segunda face na direção +X (CONFIÁVEL)
+        - "#Z" - Faces paralelas ao plano Z (CONFIÁVEL)
+        - "%CIRCLE" - Faces circulares (CONFIÁVEL)
+        - "%PLANE" - Faces planas (CONFIÁVEL)
+        
+        ## ATENÇÃO - Seletores de Arestas Problemáticos:
+        - EVITAR: "|X", "|Y", "|Z" - Podem falhar em geometrias complexas
+        - USAR: .edges() sem seletor específico para filetes seguros
+        - ALTERNATIVA: .edges(">Z") para arestas de faces específicas
 
         ## Medições e Análise:
         - .val() - Obter valor numérico (área, volume, etc.)
@@ -485,44 +501,38 @@ class PlanningModule:
                 "confidence": 0.95
             }}
 
-            ## Example 2 - Phillips Screw with Complex CadQuery Code:
-            User Request: "Create a Phillips M6x25 screw with head, body, and Phillips slot"
+            ## Example 2 - Screw with Safe Fillet:
+            User Request: "Create a screw with curved head using fillet"
             
             Correct JSON Response:
             {{
                 "intention_type": "creation",
-                "response_text": "I'll create a professional Phillips M6x25 screw with all mechanical features.",
+                "response_text": "I'll create a screw with a curved head using safe fillet techniques.",
                 "execution_plan": {{
-                    "id": "phillips_screw_m6x25",
-                    "description": "Create complete Phillips screw with head, body, slot, and thread",
-                    "cadquery_code": "# Create screw head\\nscrew_head = cq.Workplane('XY').cylinder(head_height, head_diameter/2)\\n\\n# Create Phillips slot\\nslot1 = cq.Workplane('XY').rect(phillips_width, phillips_length).extrude(phillips_depth)\\nslot2 = cq.Workplane('XY').rect(phillips_length, phillips_width).extrude(phillips_depth)\\nphillips_cutter = slot1.union(slot2)\\n\\n# Cut Phillips slot in head\\nscrew_head = screw_head.cut(phillips_cutter.translate((0, 0, head_height - phillips_depth/2)))\\n\\n# Create screw body\\nscrew_body = cq.Workplane('XY').cylinder(body_length, body_diameter/2).translate((0, 0, -body_length/2))\\n\\n# Combine head and body\\nresult = screw_head.union(screw_body)\\n\\n# Add chamfer to head\\nresult = result.faces('>Z').chamfer(chamfer_distance)",
+                    "id": "safe_fillet_screw",
+                    "description": "Create screw with safe fillet on head",
+                    "cadquery_code": "# Create screw body\\nscrew_body = cq.Workplane('XY').cylinder(body_length, body_diameter/2)\\n\\n# Create screw head\\nscrew_head = cq.Workplane('XY').cylinder(head_height, head_diameter/2)\\n\\n# Calculate safe fillet radius\\nsafe_fillet_radius = min(fillet_radius, head_height/2, (head_diameter - body_diameter)/4)\\n\\n# Apply safe fillet to head edges\\nscrew_head = screw_head.edges().fillet(safe_fillet_radius)\\n\\n# Position head on body\\nscrew_head = screw_head.translate((0, 0, body_length))\\n\\n# Combine parts\\nresult = screw_body.union(screw_head)",
                     "parameters": {{
+                        "body_diameter": 6.0,
+                        "body_length": 20.0,
                         "head_diameter": 10.0,
                         "head_height": 4.0,
-                        "body_diameter": 6.0,
-                        "body_length": 21.0,
-                        "phillips_width": 1.0,
-                        "phillips_length": 4.0,
-                        "phillips_depth": 2.0,
-                        "chamfer_distance": 0.5
+                        "fillet_radius": 2.0
                     }},
                     "ast_nodes": [],
                     "new_parameters": {{
+                        "body_diameter": 6.0,
+                        "body_length": 20.0,
                         "head_diameter": 10.0,
                         "head_height": 4.0,
-                        "body_diameter": 6.0,
-                        "body_length": 21.0,
-                        "phillips_width": 1.0,
-                        "phillips_length": 4.0,
-                        "phillips_depth": 2.0,
-                        "chamfer_distance": 0.5
+                        "fillet_radius": 2.0
                     }},
                     "affected_operations": []
                 }},
                 "parameter_updates": {{}},
                 "requires_clarification": false,
                 "clarification_questions": [],
-                "confidence": 0.9
+                "confidence": 0.95
             }}
 
             ## Example 3 - Bearing with Advanced CadQuery Operations:
@@ -572,6 +582,8 @@ class PlanningModule:
             7. **Final Result**: Always assign the final geometry to a variable named 'result'
             8. **Imports**: Include necessary imports like 'import math' if needed within the cadquery_code
             9. **Real Engineering**: Create actual engineering components, not simplified primitives
+            10. **FILETES SEGUROS**: SEMPRE use .edges() sem seletores específicos para filetes, e calcule raio máximo seguro
+            11. **EVITAR SELETORES**: NUNCA use "|X", "|Y", "|Z" para arestas - use .edges() ou .faces().edges()
 
             # YOUR TASK:
             Now analyze the user request above and generate a JSON response following the exact format shown in the examples.
@@ -615,21 +627,31 @@ class PlanningModule:
 
             # COMMON ERROR PATTERNS & FIXES:
 
-            ## Pattern 1 - Missing Parameters:
+            ## Pattern 1 - Fillet Edge Selection Errors:
+            Error: "Fillets requires that edges be selected"
+            Fix: Use .edges() without specific selectors, calculate safe radius
+            Example: "geometry.edges().fillet(safe_radius)"
+
+            ## Pattern 2 - Missing Parameters:
             Error: "missing 1 required positional argument"
             Fix: Add missing parameters to the operation
 
-            ## Pattern 2 - Incorrect API Usage:
+            ## Pattern 3 - Incorrect API Usage:
             Error: "centerOfMass() missing argument"
             Fix: Use correct API method like solid.centerOfMass() or CenterOfBoundBox()
 
-            ## Pattern 3 - Invalid Object References:
+            ## Pattern 4 - Invalid Object References:
             Error: "object has no attribute"
             Fix: Ensure target objects exist before operations
 
-            ## Pattern 4 - Syntax Errors:
+            ## Pattern 5 - Syntax Errors:
             Error: "expected 'except' or 'finally' block"
             Fix: Check code structure and indentation
+            
+            ## CRITICAL FILLET SAFETY RULES:
+            - NEVER use "|X", "|Y", "|Z" selectors for edges
+            - ALWAYS calculate safe_radius = min(desired_radius, dimension_constraints)
+            - USE .edges() without selectors for reliable fillet application
 
             # CORRECTION INSTRUCTIONS:
             1. **Output Format**: Return ONLY valid JSON - no markdown, no code blocks, no extra text
