@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🔌 Teste de WebSocket - CM² Text-to-CAD</title>
+    <style>
+        body { 
+            margin: 0; 
+            padding: 20px; 
+            font-family: 'Segoe UI', Arial, sans-serif; 
+            background: #f8f9fa;
+        }
+        h1 { 
+            color: #2c3e50; 
+            border-bottom: 3px solid #3498db; 
+            padding-bottom: 10px; 
+        }
+        .status {
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 8px;
+            font-weight: bold;
+        }
+        .connecting { background: #fff3cd; border-left: 4px solid #ffc107; }
+        .connected { background: #d4edda; border-left: 4px solid #28a745; }
+        .error { background: #f8d7da; border-left: 4px solid #dc3545; }
+        .log {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: monospace;
+            max-height: 400px;
+            overflow-y: auto;
+            margin: 15px 0;
+        }
+        button {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background: #2980b9; }
+        input {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            width: 300px;
+            margin: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔌 Teste de WebSocket - CM² Text-to-CAD</h1>
+    
+    <div id="status" class="status connecting">
+        🔄 Iniciando teste...
+    </div>
+    
+    <div>
+        <button onclick="connectWebSocket()">🔌 Conectar WebSocket</button>
+        <button onclick="startSession()">🚀 Iniciar Sessão</button>
+        <button onclick="testMessage()">📨 Enviar Mensagem Teste</button>
+    </div>
+    
+    <div>
+        <input type="text" id="messageInput" placeholder="Digite uma mensagem de teste..." value="crie um cilindro">
+        <button onclick="sendCustomMessage()">📤 Enviar</button>
+    </div>
+    
+    <div class="log" id="log"></div>
+    
+    <script>
+        let ws = null;
+        let sessionId = null;
+        
+        function log(message) {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            logDiv.innerHTML += `[${timestamp}] ${message}\n`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+            console.log(message);
+        }
+        
+        function updateStatus(message, type = 'connecting') {
+            const statusDiv = document.getElementById('status');
+            statusDiv.className = `status ${type}`;
+            statusDiv.innerHTML = message;
+        }
+        
+        async function startSession() {
+            try {
+                log('🚀 Iniciando nova sessão...');
+                const response = await fetch('/api/session/start', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                sessionId = data.session_id;
+                log(`✅ Sessão criada: ${sessionId}`);
+                return sessionId;
+            } catch (error) {
+                log(`❌ Erro ao criar sessão: ${error.message}`);
+                return null;
+            }
+        }
+        
+        function connectWebSocket() {
+            if (!sessionId) {
+                log('⚠️ Sessão não criada. Criando sessão primeiro...');
+                startSession().then(id => {
+                    if (id) connectWebSocket();
+                });
+                return;
+            }
+            
+            log(`🔌 Conectando WebSocket para sessão: ${sessionId}`);
+            updateStatus('🔄 Conectando WebSocket...', 'connecting');
+            
+            const wsUrl = `ws://localhost:8000/ws/${sessionId}`;
+            log(`📡 URL do WebSocket: ${wsUrl}`);
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = function(event) {
+                log('✅ WebSocket conectado com sucesso!');
+                updateStatus('🟢 WebSocket conectado', 'connected');
+            };
+            
+            ws.onmessage = function(event) {
+                log(`📥 Mensagem recebida: ${event.data}`);
+                try {
+                    const data = JSON.parse(event.data);
+                    log(`📊 Dados parseados: ${JSON.stringify(data, null, 2)}`);
+                } catch (e) {
+                    log(`⚠️ Erro ao parsear JSON: ${e.message}`);
+                }
+            };
+            
+            ws.onerror = function(error) {
+                log(`❌ Erro no WebSocket: ${error}`);
+                updateStatus('🔴 Erro no WebSocket', 'error');
+            };
+            
+            ws.onclose = function(event) {
+                log(`🔌 WebSocket fechado. Código: ${event.code}, Razão: ${event.reason}`);
+                updateStatus('🔴 WebSocket desconectado', 'error');
+            };
+        }
+        
+        function sendMessage(content) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('❌ WebSocket não está conectado');
+                return;
+            }
+            
+            const message = {
+                type: 'user_message',
+                content: content,
+                selected_geometry: null
+            };
+            
+            log(`📤 Enviando mensagem: ${content}`);
+            ws.send(JSON.stringify(message));
+        }
+        
+        function testMessage() {
+            sendMessage('crie um cilindro simples');
+        }
+        
+        function sendCustomMessage() {
+            const input = document.getElementById('messageInput');
+            const message = input.value.trim();
+            if (message) {
+                sendMessage(message);
+                input.value = '';
+            }
+        }
+        
+        // Auto-iniciar teste
+        window.onload = function() {
+            log('🔧 Iniciando teste automático...');
+            setTimeout(() => {
+                startSession().then(id => {
+                    if (id) {
+                        setTimeout(() => {
+                            connectWebSocket();
+                        }, 1000);
+                    }
+                });
+            }, 500);
+        };
+        
+        // Permitir envio com Enter
+        document.getElementById('messageInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendCustomMessage();
+            }
+        });
+    </script>
+</body>
+</html> 

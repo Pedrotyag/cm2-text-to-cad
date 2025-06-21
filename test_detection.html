@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste de Detecção de Geometria</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body { margin: 0; padding: 20px; font-family: Arial, sans-serif; }
+        #viewport { width: 800px; height: 600px; border: 1px solid #ccc; margin: 20px 0; }
+        .info { background: #f5f5f5; padding: 10px; margin: 10px 0; border-radius: 5px; }
+        .success { background: #d4edda; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; border: 1px solid #f5c6cb; }
+    </style>
+</head>
+<body>
+    <h1>🔧 Teste de Detecção de Geometria</h1>
+    
+    <div class="info">
+        <h3>Dados do Cilindro (CadQuery):</h3>
+        <p><strong>Bounding Box:</strong> min=[-25, -25, -20], max=[25, 25, 20]</p>
+        <p><strong>Volume:</strong> 78539.81 mm³</p>
+        <p><strong>Dimensões calculadas:</strong> [50, 50, 40] (width, height, depth)</p>
+    </div>
+    
+    <div id="result-info" class="info">
+        <h3>Resultado da Detecção:</h3>
+        <p id="detection-result">Testando...</p>
+    </div>
+    
+    <div id="viewport"></div>
+    
+    <script src="/static/js/three-setup.js"></script>
+    <script>
+        // Dados exatos do cilindro
+        const cylinderData = {
+            "type": "solid",
+            "bounding_box": {
+                "min": [-25.0, -25.0, -20.0],
+                "max": [25.0, 25.0, 20.0]
+            },
+            "volume": 78539.81633974484,
+            "center_of_mass": [0.0, 0.0, 0.0]
+        };
+        
+        // Inicializar Three.js
+        const threeSetup = new ThreeSetup('viewport');
+        threeSetup.init();
+        
+        // Testar detecção
+        console.log('🧪 INICIANDO TESTE DE DETECÇÃO');
+        console.log('Dados do modelo:', cylinderData);
+        
+        // Calcular dimensões como o sistema faz
+        const bbox = cylinderData.bounding_box;
+        const size = [
+            bbox.max[0] - bbox.min[0],
+            bbox.max[1] - bbox.min[1], 
+            bbox.max[2] - bbox.min[2]
+        ];
+        
+        console.log('Dimensões calculadas:', size);
+        
+        // Chamar detecção diretamente
+        const detectedType = threeSetup.detectGeometryType(cylinderData, size);
+        
+        // Mostrar resultado
+        const resultElement = document.getElementById('detection-result');
+        const resultContainer = document.getElementById('result-info');
+        
+        if (detectedType === 'cylinder') {
+            resultElement.textContent = `✅ SUCESSO! Detectado como: ${detectedType}`;
+            resultContainer.className = 'info success';
+        } else {
+            resultElement.textContent = `❌ ERRO! Detectado como: ${detectedType} (esperado: cylinder)`;
+            resultContainer.className = 'info error';
+        }
+        
+        // Atualizar modelo no viewport
+        threeSetup.updateModel(cylinderData);
+        
+        console.log('🏁 TESTE CONCLUÍDO');
+    </script>
+</body>
+</html> 

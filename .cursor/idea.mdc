@@ -1,0 +1,98 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+Excelente. Esta é a estratégia definitiva para um sistema Text-to-CAD de ponta, concebido não como um tradutor, mas como um **colaborador de design generativo**.
+
+### **Título do Projeto: Motor de Modelagem Conversacional Paramétrico (CM²)**
+
+### **Visão Geral**
+
+O sistema não irá apenas traduzir texto para comandos. Ele irá manter uma **compreensão semântica e paramétrica** do modelo 3D, permitindo um diálogo iterativo, modificações inteligentes e a exploração de variações de design. O usuário não descreve apenas a geometria; ele conversa com um engenheiro virtual sobre a intenção do design.
+
+---
+
+### **Arquitetura de Componentes Desacoplados**
+
+O sistema será modular, com cada componente tendo uma única responsabilidade. A comunicação entre eles é gerida pelo Orquestrador Central.
+
+**1. Interface do Usuário (O Cockpit)**
+*   **Não é apenas um chat.** É uma interface integrada com:
+    *   **Viewport 3D Interativo:** Renderização em tempo real do modelo atual. Permite inspecionar a geometria, selecionar faces/arestas com o mouse para fornecer contexto ao próximo comando de texto ("faça um furo *nesta face*").
+    *   **Linha do Tempo de Operações:** Uma lista visual de todas as operações aplicadas (Criação, Furo, Chanfro). Clicar em um item destaca a geometria correspondente e permite editar os parâmetros daquela operação específica.
+    *   **Prompt de Comando Inteligente:** Oferece autocompletar e sugestões baseadas no estado atual do modelo.
+
+**2. Orquestrador Central (O Maestro)**
+*   **O cérebro do sistema.** É um serviço stateful que gerencia todo o fluxo de trabalho. Ele não executa tarefas, mas delega-as aos componentes corretos.
+*   **Responsabilidades:**
+    *   Receber eventos da UI (texto, seleção 3D).
+    *   Consultar o Gerenciador de Diálogo para entender a intenção do usuário.
+    *   Formular a consulta para o Módulo de Planejamento (LLM).
+    *   Enviar o plano de execução para o Executor Sandboxed.
+    *   Receber o resultado (novo estado ou erro) e atualizar os outros componentes.
+
+**3. Gerenciador de Diálogo e Estado (A Memória)**
+*   **Mantém o contexto da conversa.** Armazena o histórico de interações e o estado atual do design.
+*   **Componentes Internos:**
+    *   **Resolvedor de Intenção:** Analisa o novo prompt do usuário no contexto da conversa. Decide se é:
+        *   Uma **nova instrução** ("crie uma caixa").
+        *   Uma **modificação** ("faça a caixa mais alta").
+        *   Uma **pergunta** ("qual a espessura da parede?").
+        *   Um **comando meta** ("desfaça a última operação").
+    *   **Representação do Estado Atual:** Mantém uma versão leve e serializável do modelo, pronta para ser enviada ao LLM para contexto.
+
+**4. Módulo de Planejamento (O Engenheiro Criativo - LLM Core)**
+*   **Onde o LLM opera.** Sua única tarefa é receber uma consulta complexa do Orquestrador e retornar um plano de ação estruturado.
+*   **Input (A Consulta):** Um objeto JSON rico contendo:
+    *   O pedido bruto do usuário.
+    *   O histórico da conversa.
+    *   A representação do estado atual do modelo (incluindo nomes de parâmetros e operações já existentes).
+    *   A "documentação da API" do Executor (quais funções CadQuery são permitidas).
+*   **Output (O Plano de Ação):** Uma lista de comandos JSON. Para máxima flexibilidade, ele não gera o código CadQuery diretamente. Em vez disso, gera uma **Árvore de Execução Abstrata (AST)**, que pode ser convertida para código Python. Isso permite validações antes da execução.
+**5. Executor Sandboxed (A Célula de Execução Segura)**
+*   **O ambiente de execução isolado.** Recebe o plano do Orquestrador e o executa.
+*   **Características Essenciais:**
+    *   **Isolamento Total:** Roda em um container Docker ou WebAssembly (Wasm) descartável para cada execução, prevenindo qualquer acesso ao sistema hospedeiro.
+    *   **Gerenciamento de Recursos:** Limites estritos de tempo de CPU e uso de memória para evitar que um código mal gerado congele o sistema.
+    *   **API de Execução:** Recebe o estado do modelo anterior e o plano de ação. Retorna o novo estado do modelo ou um erro estruturado.
+    *   **Tradução da AST:** Converte a árvore de execução recebida do LLM em código Python/CadQuery real, pouco antes de executar.
+
+**6. O Grafo de Intenção Paramétrica (PIG - A Alma do Modelo)**
+*   **Este é o salto quântico.** Paralelamente ao modelo 3D, o sistema constrói uma estrutura de dados separada: um grafo direcionado que representa a **intenção do design**.
+*   **Nós do Grafo:** Parâmetros (`largura_base = 50`) e Operações (`extrusao_1 = extrude(...)`).
+*   **Arestas do Grafo:** Dependências (`extrusao_1` depende de `sketch_base` e `altura_base`).
+*   **Por que isso é revolucionário?** Quando o usuário diz "faça a caixa 10mm mais alta", o sistema não pede ao LLM para gerar um código de corte/extrusão. Ele consulta o PIG, encontra o nó `altura_base`, atualiza seu valor, e automaticamente re-executa todos os nós dependentes no Executor. Isso é **modelagem paramétrica real**, dirigida por linguagem natural.
+
+---
+
+### **Fluxos de Trabalho Detalhados**
+
+**Fluxo 1: Criação Inicial**
+1.  **Usuário:** "Crie um flange circular com 100mm de diâmetro externo, 30mm de interno e 10mm de espessura."
+2.  **Orquestrador** envia o pedido para o **Módulo de Planejamento (LLM)**.
+3.  **LLM** retorna um plano AST para criar um cilindro e cortar outro do centro. Define parâmetros no plano: `diam_ext`, `diam_int`, `espessura`.
+4.  **Orquestrador** envia o plano e um estado nulo para o **Executor Sandboxed**.
+5.  **Executor** executa, gera o modelo 3D.
+6.  **Orquestrador** usa o plano para criar o **Grafo de Intenção Paramétrica (PIG)** inicial.
+7.  **UI** renderiza o modelo e popula a linha do tempo e a lista de parâmetros.
+
+**Fluxo 2: Modificação Paramétrica Inteligente**
+1.  **Usuário:** "Aumente o diâmetro externo para 120mm."
+2.  **Orquestrador** consulta o **Gerenciador de Diálogo**. Ele reconhece "diâmetro externo" como o parâmetro `diam_ext` definido no **PIG**.
+3.  **Orquestrador** *não* chama o LLM. Ele modifica o valor do nó `diam_ext` no PIG diretamente.
+4.  A modificação dispara uma re-avaliação em cascata no PIG.
+5.  O **Orquestrador** envia para o **Executor** um novo job: re-executar o grafo a partir do nó modificado.
+6.  O **Executor** gera a nova geometria. A **UI** é atualizada instantaneamente.
+
+**Fluxo 3: Modificação Complexa (Loop de Feedback com o LLM)**
+1.  **Usuário:** "Agora, adicione 4 furos para parafusos, distribuídos igualmente."
+2.  **Orquestrador** envia o pedido, o histórico e o estado do PIG para o **Módulo de Planejamento (LLM)**.
+3.  **LLM** retorna um plano AST para criar um padrão polar de furos (`cq.Workplane.polarArray`).
+4.  O **Executor** tenta rodar o plano, mas o LLM cometeu um erro na sintaxe do `polarArray`. O Executor falha e retorna um erro estruturado: `Erro: o método polarArray requer um argumento 'count'`.
+5.  **Orquestrador** intercepta o erro. Ele inicia um **Ciclo de Auto-Correção**:
+6.  Ele chama o **LLM** novamente com a instrução original, mas adiciona um novo contexto: "Sua última tentativa falhou com o erro: '[Erro do Executor]'. Por favor, corrija o plano."
+7.  O **LLM** gera um novo plano corrigido.
+8.  O **Executor** roda o plano com sucesso. O modelo e o PIG são atualizados com a nova operação "padrao_furos".
+
+Esta estratégia cria um sistema dinâmico, resiliente e genuinamente colaborativo, movendo o paradigma de uma ferramenta passiva para um parceiro de design ativo.
