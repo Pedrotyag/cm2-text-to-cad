@@ -60,6 +60,12 @@
                 <span id="connection-status" class="status-dot offline"></span>
                 <span id="session-info">Conectando...</span>
             </div>
+            <div class="model-select">
+                <select id="model-select">
+                    <option value="gemini-2.5-flash">Gemini Flash</option>
+                    <option value="gemini-2.5-pro">Gemini Pro</option>
+                </select>
+            </div>
         </header>
 
         <!-- Main Content -->
@@ -153,10 +159,10 @@
                 </div>
 
                 <!-- Resizer between chat and parameters -->
-                <div class="resizer horizontal-resizer" id="chat-params-resizer"></div>
+                <div class="resizer horizontal-resizer" id="chat-params-resizer" style="display:none;"></div>
 
                 <!-- Parameters Panel -->
-                <div class="parameters-panel" id="parameters-panel">
+                <div class="parameters-panel hidden" id="parameters-panel">
                     <div class="panel-header">
                         <h3>⚙️ Parâmetros</h3>
                         <div class="panel-controls">
@@ -173,10 +179,10 @@
                 </div>
 
                 <!-- Resizer between parameters and timeline -->
-                <div class="resizer horizontal-resizer" id="params-timeline-resizer"></div>
+                <div class="resizer horizontal-resizer" id="params-timeline-resizer" style="display:none;"></div>
 
                 <!-- Timeline Panel -->
-                <div class="timeline-panel" id="timeline-panel">
+                <div class="timeline-panel hidden" id="timeline-panel">
                     <div class="panel-header">
                         <h3>📜 Linha do Tempo</h3>
                         <div class="panel-controls">

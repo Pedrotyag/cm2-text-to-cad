@@ -6,6 +6,7 @@ class CM2App {
         this.isConnected = false;
         this.isProcessing = false;
         this.messageCount = 0;
+        this.selectedModel = 'gemini-2.5-flash';
         
         // Inicializar componentes
         this.threeSetup = new ThreeSetup('viewport-3d');
@@ -179,6 +180,14 @@ class CM2App {
         document.getElementById('close-error').addEventListener('click', () => {
             document.getElementById('error-modal').style.display = 'none';
         });
+        
+        const modelSelect = document.getElementById('model-select');
+        if (modelSelect) {
+            this.selectedModel = modelSelect.value;
+            modelSelect.addEventListener('change', () => {
+                this.selectedModel = modelSelect.value;
+            });
+        }
     }
     
     async sendMessage() {
@@ -205,7 +214,8 @@ class CM2App {
             this.websocketClient.send({
                 type: 'user_message',
                 content: message,
-                selected_geometry: this.threeSetup.getSelectedGeometry()
+                selected_geometry: this.threeSetup.getSelectedGeometry(),
+                selected_model: this.selectedModel
             });
             
         } catch (error) {

@@ -42,16 +42,16 @@ class PlanningModule:
         
         genai.configure(api_key=self.api_key)
         
-        # Configurar modelo com structured output para JSON consistente
-        generation_config = genai.types.GenerationConfig(
-            temperature=0.1,  # Baixa temperatura para consistência
-            response_mime_type="application/json",  # Forçar output JSON estruturado
+        self.generation_config = genai.types.GenerationConfig(
+            temperature=0.1,
+            response_mime_type="application/json",
             max_output_tokens=15000
         )
-        
+
+        self.current_model_name = 'gemini-2.5-flash'
         self.model = genai.GenerativeModel(
-            'gemini-2.5-flash',
-            generation_config=generation_config
+            self.current_model_name,
+            generation_config=self.generation_config
         )
         
         # Documentação da API CadQuery disponível para o LLM
@@ -88,7 +88,7 @@ class PlanningModule:
                 "context": context,
                 "prompt": prompt,
                 "response": response,
-                "model": "gemini-2.5-flash",
+                "model": self.current_model_name,
                 "prompt_length": len(prompt),
                 "response_length": len(response)
             }
@@ -336,6 +336,10 @@ class PlanningModule:
             query: Consulta estruturada contendo contexto e requisição
         """
         try:
+            model_choice = query.get('model_choice') or self.current_model_name
+            if model_choice != self.current_model_name:
+                self._initialize_model(model_choice)
+
             # Construir prompt estruturado para o Gemini
             prompt = self._build_prompt(query)
             
@@ -444,157 +448,32 @@ class PlanningModule:
             "required": ["intention_type", "response_text"]
         }
         
-        # Construir prompt com Chain-of-Thought e Few-Shot Learning
-        prompt = textwrap.dedent(f"""
-            # ROLE: Expert CAD Design Assistant with CadQuery
-            You are a specialized assistant for parametric CAD design using CadQuery Python library.
-            Your expertise includes analyzing natural language requests and generating structured execution plans.
-
-            # CONTEXT INFORMATION:
-            ## User Request:
-            {query.get('user_request', '')}
-
-            ## Conversation History (last 5 messages):
-            {self._format_conversation_history(query.get('conversation_history', []))}
-
-            ## Current Model State:
-            {safe_json_dumps(query.get('current_model_state'), indent=2) if query.get('current_model_state') else 'No active model'}
-
-            ## Available CadQuery Operations:
-            {self.cadquery_api_docs}
-
-            # THINKING PROCESS (Chain-of-Thought):
-            Before generating the JSON response, think through these steps:
-            1. **Analyze Request**: What does the user want to create or modify?
-            2. **Identify Type**: Is this creation, modification, query, or error handling?
-            3. **Plan Operations**: What CadQuery operations are needed?
-            4. **Parameter Setup**: What parameters should be configurable?
-            5. **Validation**: Does this plan make geometric sense?
-
-            # FEW-SHOT EXAMPLES:
-
-            ## Example 1 - Simple Cylinder with Direct CadQuery Code:
-            User Request: "Create a cylinder with radius 10 and height 20"
-            
-            Correct JSON Response:
-            {{
-                "intention_type": "creation",
-                "response_text": "I'll create a cylinder with the specified dimensions using parametric CadQuery code.",
-                "execution_plan": {{
-                    "id": "cylinder_creation_001",
-                    "description": "Create parametric cylinder",
-                    "cadquery_code": "result = cq.Workplane('XY').cylinder(cylinder_height, cylinder_radius)",
-                    "parameters": {{
-                        "cylinder_height": 20.0,
-                        "cylinder_radius": 10.0
-                    }},
-                    "ast_nodes": [],
-                    "new_parameters": {{
-                        "cylinder_height": 20.0,
-                        "cylinder_radius": 10.0
-                    }},
-                    "affected_operations": []
-                }},
-                "parameter_updates": {{}},
-                "requires_clarification": false,
-                "clarification_questions": [],
-                "confidence": 0.95
-            }}
-
-            ## Example 2 - Screw with Safe Fillet:
-            User Request: "Create a screw with curved head using fillet"
-            
-            Correct JSON Response:
-            {{
-                "intention_type": "creation",
-                "response_text": "I'll create a screw with a curved head using safe fillet techniques.",
-                "execution_plan": {{
-                    "id": "safe_fillet_screw",
-                    "description": "Create screw with safe fillet on head",
-                    "cadquery_code": "# Create screw body\\nscrew_body = cq.Workplane('XY').cylinder(body_length, body_diameter/2)\\n\\n# Create screw head\\nscrew_head = cq.Workplane('XY').cylinder(head_height, head_diameter/2)\\n\\n# Calculate safe fillet radius\\nsafe_fillet_radius = min(fillet_radius, head_height/2, (head_diameter - body_diameter)/4)\\n\\n# Apply safe fillet to head edges\\nscrew_head = screw_head.edges().fillet(safe_fillet_radius)\\n\\n# Position head on body\\nscrew_head = screw_head.translate((0, 0, body_length))\\n\\n# Combine parts\\nresult = screw_body.union(screw_head)",
-                    "parameters": {{
-                        "body_diameter": 6.0,
-                        "body_length": 20.0,
-                        "head_diameter": 10.0,
-                        "head_height": 4.0,
-                        "fillet_radius": 2.0
-                    }},
-                    "ast_nodes": [],
-                    "new_parameters": {{
-                        "body_diameter": 6.0,
-                        "body_length": 20.0,
-                        "head_diameter": 10.0,
-                        "head_height": 4.0,
-                        "fillet_radius": 2.0
-                    }},
-                    "affected_operations": []
-                }},
-                "parameter_updates": {{}},
-                "requires_clarification": false,
-                "clarification_questions": [],
-                "confidence": 0.95
-            }}
-
-            ## Example 3 - Bearing with Advanced CadQuery Operations:
-            User Request: "Create a ball bearing 6200 with outer ring, inner ring, and balls"
-            
-            Correct JSON Response:
-            {{
-                "intention_type": "creation",
-                "response_text": "I'll create a complete ball bearing 6200 with all components.",
-                "execution_plan": {{
-                    "id": "bearing_6200_complete",
-                    "description": "Create ball bearing with outer ring, inner ring, and balls",
-                    "cadquery_code": "import math\\n\\n# Outer ring\\nouter_ring = (cq.Workplane('XY')\\n              .cylinder(bearing_width, bearing_od/2)\\n              .cylinder(bearing_width, (bearing_od - ball_diameter)/2, combine=False))\\n\\n# Inner ring\\ninner_ring = (cq.Workplane('XY')\\n              .cylinder(bearing_width, (bearing_id + ball_diameter)/2)\\n              .cylinder(bearing_width, bearing_id/2, combine=False))\\n\\n# Ball pitch circle\\npitch_radius = (bearing_od - bearing_id - ball_diameter) / 2 + bearing_id/2\\n\\n# Create single ball\\nball = cq.Workplane('XY').sphere(ball_diameter/2)\\n\\n# Create array of balls\\nballs = (cq.Workplane('XY')\\n         .center(pitch_radius, 0)\\n         .sphere(ball_diameter/2)\\n         .polarArray(radius=0, startAngle=0, angle=360, count=num_balls))\\n\\n# Combine all components\\nresult = outer_ring.union(inner_ring).union(balls)",
-                    "parameters": {{
-                        "bearing_od": 30.0,
-                        "bearing_id": 10.0,
-                        "bearing_width": 9.0,
-                        "ball_diameter": 4.0,
-                        "num_balls": 8
-                    }},
-                    "ast_nodes": [],
-                    "new_parameters": {{
-                        "bearing_od": 30.0,
-                        "bearing_id": 10.0,
-                        "bearing_width": 9.0,
-                        "ball_diameter": 4.0,
-                        "num_balls": 8
-                    }},
-                    "affected_operations": []
-                }},
-                "parameter_updates": {{}},
-                "requires_clarification": false,
-                "clarification_questions": [],
-                "confidence": 0.85
-            }}
-
-            # JSON SCHEMA TO FOLLOW:
-            {json.dumps(json_schema, indent=2)}
-
-            # CRITICAL INSTRUCTIONS:
-            1. **Output Format**: Return ONLY valid JSON - no markdown, no code blocks, no extra text
-            2. **CadQuery Code**: Use the "cadquery_code" field for direct CadQuery Python code
-            3. **Parameter Names**: Always use descriptive variable names, never hardcoded values
-            4. **Code Freedom**: You have TOTAL FREEDOM to use any CadQuery operations from the API documentation
-            5. **Complex Geometries**: Feel free to create sophisticated mechanical components with multiple operations
-            6. **Code Structure**: Use \\n for line breaks in cadquery_code, create intermediate variables as needed
-            7. **Final Result**: Always assign the final geometry to a variable named 'result'
-            8. **Imports**: Include necessary imports like 'import math' if needed within the cadquery_code
-            9. **Real Engineering**: Create actual engineering components, not simplified primitives
-            10. **FILETES SEGUROS**: SEMPRE use .edges() sem seletores específicos para filetes, e calcule raio máximo seguro
-            11. **EVITAR SELETORES**: NUNCA use "|X", "|Y", "|Z" para arestas - use .edges() ou .faces().edges()
-
-            # YOUR TASK:
-            Now analyze the user request above and generate a JSON response following the exact format shown in the examples.
-            Think through the steps systematically, then provide only the JSON output.
-        """).strip()
-        
-        # Tratar caso de correção de erro
         if query.get('request_type') == 'error_correction':
             prompt = self._build_error_correction_prompt(query)
-        
-        return prompt
+            return prompt
+
+        prompt_body = textwrap.dedent(f"""
+            # ROLE: Expert CAD Design Assistant with CadQuery
+
+            ## User Request
+            {query.get('user_request', '')}
+
+            ## Conversation History
+            {self._format_conversation_history(query.get('conversation_history', []))}
+
+            ## Current Model State
+            {safe_json_dumps(query.get('current_model_state'), indent=2) if query.get('current_model_state') else 'No active model'}
+
+            ## Available CadQuery Operations
+            {self.cadquery_api_docs}
+
+            ## JSON Schema
+            {json.dumps(json_schema)}
+
+            Provide a response in JSON only.
+        """).strip()
+
+        return prompt_body
     
     def _build_error_correction_prompt(self, query: Dict[str, Any]) -> str:
         """Constrói prompt específico para correção de erros usando Chain-of-Thought"""
@@ -984,3 +863,10 @@ class PlanningModule:
         except Exception as e:
             logger.error(f"Erro na auto-correção: {e}")
             return failed_response  # Retorna original se não conseguir corrigir 
+
+    def _initialize_model(self, model_name: str):
+        self.current_model_name = model_name
+        self.model = genai.GenerativeModel(
+            model_name,
+            generation_config=self.generation_config
+        ) 

@@ -16,7 +16,7 @@ from src.models import GeometrySelection
 from src.core.planning_module import safe_json_dumps
 
 # Configurar logging
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Inicializar FastAPI
@@ -47,6 +47,7 @@ class UserInputRequest(BaseModel):
     message: str
     selected_geometry: Optional[Dict[str, Any]] = None
     session_id: Optional[str] = None
+    selected_model: Optional[str] = None
 
 class SessionResponse(BaseModel):
     session_id: str
@@ -150,11 +151,14 @@ async def send_message(request: UserInputRequest):
         if request.selected_geometry:
             selected_geometry = GeometrySelection(**request.selected_geometry)
         
+        selected_model = request.selected_model
+        
         # Processar mensagem
         response = await orchestrator.process_user_input(
             user_input=request.message,
             selected_geometry=selected_geometry,
-            session_id=request.session_id
+            session_id=request.session_id,
+            selected_model=selected_model
         )
         
         return {
@@ -214,6 +218,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 # Processar mensagem do usuário
                 user_input = message_data.get("content", "")
                 selected_geometry = message_data.get("selected_geometry")
+                selected_model = message_data.get("selected_model")
                 
                 logger.info(f"Processando mensagem do usuário: '{user_input}' na sessão {session_id}")
                 
@@ -228,7 +233,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 response = await orchestrator.process_user_input(
                     user_input=user_input,
                     selected_geometry=geometry_selection,
-                    session_id=session_id
+                    session_id=session_id,
+                    selected_model=selected_model
                 )
                 logger.info(f"Resposta recebida do orquestrador: {type(response)}")
                 

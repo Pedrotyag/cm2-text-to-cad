@@ -13,9 +13,10 @@ class UIControls {
         this.isResizing = false;
         this.currentResizer = null;
         this.panelStates = {
-            parameters: true,
-            timeline: true
+            parameters: false,
+            timeline: false
         };
+        this.isToggling = false;
         this.init();
     }
     
@@ -80,8 +81,7 @@ class UIControls {
     }
     
     showTooltip(event) {
-        // Implementação simples de tooltip
-        console.log('Tooltip:', event.target.title);
+        // Implementação simples de tooltip - sem logs
     }
     
     hideTooltip(event) {
@@ -813,56 +813,70 @@ class UIControls {
 
     // ===== CONTROLES DE VISIBILIDADE DOS PAINÉIS =====
     initializePanelToggle() {
-        // Botões de toggle nos controles do chat
+        // Remove existing listeners first
         const toggleButtons = document.querySelectorAll('.toggle-panel');
         toggleButtons.forEach(button => {
-            button.addEventListener('click', (e) => {
-                const target = e.target.dataset.target;
-                this.togglePanel(target, button);
-            });
+            button.replaceWith(button.cloneNode(true));
         });
-
-        // Botões de collapse nos próprios painéis
-        const collapseButtons = document.querySelectorAll('.collapse-btn');
-        collapseButtons.forEach(button => {
-            button.addEventListener('click', (e) => {
-                const panel = e.target.closest('.parameters-panel, .timeline-panel');
-                this.collapsePanel(panel);
-            });
+        
+        // Add new listeners to cloned buttons
+        document.querySelectorAll('.toggle-panel').forEach(button => {
+            button.addEventListener('click', this.handleToggleClick.bind(this));
         });
+    }
+    
+    handleToggleClick(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        if (this.isToggling) {
+            return;
+        }
+        
+        const target = e.currentTarget.dataset.target;
+        if (!target) return;
+        
+        this.togglePanel(target, e.currentTarget);
     }
 
     togglePanel(panelType, button) {
-        const panel = document.getElementById(`${panelType}-panel`);
-        const resizer = document.getElementById(`chat-${panelType}-resizer`) || 
-                       document.getElementById(`params-timeline-resizer`);
+        this.isToggling = true;
         
-        if (!panel) return;
+        const panel = document.getElementById(`${panelType}-panel`);
+        let resizer = null;
+        
+        if (panelType === 'parameters') {
+            resizer = document.getElementById('chat-params-resizer');
+        } else if (panelType === 'timeline') {
+            resizer = document.getElementById('params-timeline-resizer');
+        }
+        
+        if (!panel) {
+            this.isToggling = false;
+            return;
+        }
 
         const isHidden = panel.classList.contains('hidden');
         
         if (isHidden) {
-            // Mostrar painel
             panel.classList.remove('hidden');
             if (resizer) resizer.style.display = 'block';
             button.classList.add('active');
             this.panelStates[panelType] = true;
-            
-            // Restaurar tamanho padrão
             panel.style.flex = '0 0 200px';
         } else {
-            // Ocultar painel
             panel.classList.add('hidden');
             if (resizer) resizer.style.display = 'none';
             button.classList.remove('active');
             this.panelStates[panelType] = false;
         }
 
-        // Salvar estado
         this.savePanelStates();
-        
-        // Reajustar layout
         this.adjustLayoutAfterToggle();
+        
+        setTimeout(() => {
+            this.isToggling = false;
+        }, 50);
     }
 
     collapsePanel(panel) {
@@ -917,7 +931,7 @@ class UIControls {
                 // Aplicar estados salvos
                 Object.entries(this.panelStates).forEach(([panelType, isVisible]) => {
                     const button = document.querySelector(`[data-target="${panelType}"]`);
-                    if (button && !isVisible) {
+                    if (button && isVisible) {
                         this.togglePanel(panelType, button);
                     }
                 });
@@ -931,11 +945,7 @@ class UIControls {
 // Inicializar quando o DOM estiver pronto
 document.addEventListener('DOMContentLoaded', () => {
     window.uiControls = new UIControls();
-    
-    // Carregar estados salvos dos painéis após um pequeno delay
-    setTimeout(() => {
-        window.uiControls.loadPanelStates();
-    }, 100);
+    window.uiControls.loadPanelStates();
 });
 
 // ===== FUNÇÕES UTILITÁRIAS =====

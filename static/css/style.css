@@ -447,6 +447,7 @@ body {
 
 .collapse-btn {
     transition: var(--transition-fast);
+    cursor: pointer;
 }
 
 .collapse-btn.collapsed {

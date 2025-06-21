@@ -42,10 +42,11 @@ class CentralOrchestrator:
         return self.current_session_id
     
     async def process_user_input(
-        self, 
-        user_input: str, 
+        self,
+        user_input: str,
         selected_geometry: Optional[GeometrySelection] = None,
-        session_id: Optional[str] = None
+        session_id: Optional[str] = None,
+        selected_model: Optional[str] = None
     ) -> SystemResponse:
         """
         Processa entrada do usuário e orquestra resposta do sistema.
@@ -54,6 +55,7 @@ class CentralOrchestrator:
             user_input: Texto enviado pelo usuário
             selected_geometry: Geometria selecionada na UI (opcional)
             session_id: ID da sessão (usa atual se não especificado)
+            selected_model: Modelo selecionado para a requisição (opcional)
         """
         if self.is_processing:
             return SystemResponse(
@@ -94,7 +96,10 @@ class CentralOrchestrator:
             
             # 5. Se não é modificação paramétrica simples, consultar LLM
             response = await self._process_with_llm(
-                session_id, user_message, intention_result
+                session_id,
+                user_message,
+                intention_result,
+                selected_model
             )
             
             return response
@@ -160,7 +165,11 @@ class CentralOrchestrator:
             return None
     
     async def _process_with_llm(
-        self, session_id: str, user_message: UserMessage, intention_result
+        self,
+        session_id: str,
+        user_message: UserMessage,
+        intention_result,
+        selected_model: Optional[str] = None
     ) -> SystemResponse:
         """Processa requisição usando o módulo de planejamento (LLM)"""
         
@@ -176,7 +185,8 @@ class CentralOrchestrator:
             "current_model_state": model_state.model_dump() if model_state else None,
             "pig_state": pig_state,
             "selected_geometry": user_message.selected_geometry,
-            "intention_type": intention_result.intention_type.value
+            "intention_type": intention_result.intention_type.value,
+            "model_choice": selected_model or "gemini-2.5-flash"
         }
         
         # 3. Obter plano do LLM
