@@ -137,7 +137,15 @@ async def start_session():
     """Inicia uma nova sessão de design"""
     try:
         session_id = await orchestrator.start_session()
-        return SessionResponse(session_id=session_id, status="success")
+        
+        # Obter informações do modelo atual
+        model_info = await get_current_model_info()
+        
+        return {
+            "session_id": session_id, 
+            "status": "success",
+            "model_info": model_info
+        }
     except Exception as e:
         logger.error(f"Erro ao iniciar sessão: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -161,9 +169,13 @@ async def send_message(request: UserInputRequest):
             selected_model=selected_model
         )
         
+        # Obter informações do modelo atual
+        model_info = await get_current_model_info()
+        
         return {
             "response": response.model_dump(),
-            "session_id": request.session_id or orchestrator.current_session_id
+            "session_id": request.session_id or orchestrator.current_session_id,
+            "model_info": model_info
         }
         
     except Exception as e:
@@ -175,6 +187,14 @@ async def get_session_state(session_id: str):
     """Retorna estado completo da sessão"""
     try:
         state = await orchestrator.get_session_state(session_id)
+        model_info = await get_current_model_info()
+        
+        # Adicionar informações do modelo ao estado
+        if isinstance(state, dict):
+            state["model_info"] = model_info
+        else:
+            state = {"state": state, "model_info": model_info}
+            
         return state
     except Exception as e:
         logger.error(f"Erro ao obter estado da sessão: {e}")
@@ -206,6 +226,13 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     await manager.connect(websocket, session_id)
     
     try:
+        # Enviar informações do modelo logo após conectar
+        model_info = await get_current_model_info()
+        await manager.send_personal_message({
+            "type": "model_info",
+            "model_info": model_info
+        }, session_id)
+        
         while True:
             # Receber mensagem do cliente
             data = await websocket.receive_text()
@@ -248,11 +275,15 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     logger.error(f"Atributos da resposta: {dir(response)}")
                     raise
                 
-                # Enviar resposta
+                # Obter informações atualizadas do modelo
+                current_model_info = await get_current_model_info()
+                
+                # Enviar resposta com informações do modelo
                 logger.info(f"Enviando resposta via WebSocket")
                 await manager.send_personal_message({
                     "type": "system_response",
-                    "data": response_data
+                    "response": response_data,
+                    "model_info": current_model_info
                 }, session_id)
                 
             elif message_type == "parameter_update":
@@ -273,29 +304,33 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                             session_id, affected_nodes, pig
                         )
                         
+                        # Obter informações do modelo
+                        model_info = await get_current_model_info()
+                        
                         # Enviar resultado
                         await manager.send_personal_message({
-                            "type": "parameter_updated",
-                            "data": {
-                                "parameter_name": param_name,
-                                "new_value": new_value,
-                                "execution_result": execution_result.model_dump(),
-                                "affected_nodes": affected_nodes
-                            }
+                            "type": "parameter_update",
+                            "parameter_name": param_name,
+                            "new_value": new_value,
+                            "execution_result": execution_result.model_dump(),
+                            "affected_nodes": affected_nodes,
+                            "model_info": model_info
                         }, session_id)
                         
                     except Exception as e:
                         await manager.send_personal_message({
                             "type": "error",
-                            "data": {"message": str(e)}
+                            "message": str(e)
                         }, session_id)
             
             elif message_type == "get_state":
                 # Solicitar estado atual
                 state = await orchestrator.get_session_state(session_id)
+                model_info = await get_current_model_info()
                 await manager.send_personal_message({
                     "type": "session_state",
-                    "data": state
+                    "state": state,
+                    "model_info": model_info
                 }, session_id)
                 
     except WebSocketDisconnect:
@@ -663,6 +698,39 @@ async def validate_edit(request: ValidateEditRequest):
     except Exception as e:
         logger.error(f"Erro na validação: {e}")
         return {"success": False, "error": str(e)}
+
+@app.get("/api/model/info")
+async def get_model_info():
+    """Retorna informações sobre o modelo atual"""
+    try:
+        model_info = await get_current_model_info()
+        return model_info
+    except Exception as e:
+        logger.error(f"Erro ao obter informações do modelo: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def get_current_model_info():
+    """Função auxiliar para obter informações do modelo atual"""
+    try:
+        planning_module = orchestrator.planning_module
+        
+        return {
+            "provider": planning_module.llm_provider.upper(),
+            "model_name": planning_module.current_model_name,
+            "base_url": planning_module.ollama_base_url if planning_module.llm_provider == "ollama" else "https://generativelanguage.googleapis.com",
+            "is_local": planning_module.llm_provider == "ollama",
+            "status": "active"
+        }
+    except Exception as e:
+        logger.error(f"Erro ao obter informações do modelo: {e}")
+        return {
+            "provider": "UNKNOWN",
+            "model_name": "unknown",
+            "base_url": "unknown",
+            "is_local": False,
+            "status": "error",
+            "error": str(e)
+        }
 
 if __name__ == "__main__":
     # Verificar variáveis de ambiente obrigatórias

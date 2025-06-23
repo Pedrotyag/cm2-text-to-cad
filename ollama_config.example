@@ -1,0 +1,35 @@
+# Ollama Configuration Example
+# Copy these settings to your .env file to use Ollama instead of Gemini
+
+# LLM Configuration - IMPORTANT: Set this to 'ollama'
+LLM_PROVIDER=ollama
+
+# Ollama Settings
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=hf.co/unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF:Q4_K_M
+OLLAMA_TIMEOUT=600  # Timeout in seconds (10 minutes default)
+
+# Gemini (not needed when using Ollama)
+# GEMINI_API_KEY=your_api_key_here
+
+# IMPORTANT SETUP STEPS:
+# 1. Install Ollama: https://ollama.ai/
+# 2. Start Ollama service: ollama serve
+# 3. Pull the DeepSeek model: ollama pull hf.co/unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF:Q4_K_M
+# 4. Copy these settings to your .env file
+# 5. Restart the CM² application
+
+# Alternative models you can try (after pulling them):
+# OLLAMA_MODEL=llama2:7b
+# OLLAMA_MODEL=codellama:7b
+# OLLAMA_MODEL=mistral:7b
+# OLLAMA_MODEL=gemma:2b
+
+# Timeout Settings:
+# - For faster models (7B): OLLAMA_TIMEOUT=300 (5 minutes)
+# - For medium models (8B-13B): OLLAMA_TIMEOUT=600 (10 minutes) 
+# - For larger models (30B+): OLLAMA_TIMEOUT=1200 (20 minutes)
+# - For very large models: OLLAMA_TIMEOUT=1800 (30 minutes)
+
+# Note: The frontend model selector will be disabled when using Ollama
+# The model is configured here in the .env file, not in the frontend 

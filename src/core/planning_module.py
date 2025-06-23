@@ -1,13 +1,15 @@
 import os
 import json
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 from pathlib import Path
 import google.generativeai as genai
 from dotenv import load_dotenv
 import textwrap
 import re
+import requests
+import asyncio
 
 from ..models import (
     LLMQuery, LLMResponse, ExecutionPlan, ASTNode, 
@@ -31,12 +33,36 @@ def safe_json_dumps(obj, **kwargs):
 
 class PlanningModule:
     """
-    Módulo de Planejamento - Interface com o Gemini para gerar planos de ação.
+    Módulo de Planejamento - Interface com LLMs (Gemini e Ollama) para gerar planos de ação.
     Converte linguagem natural em árvores de execução abstratas (AST).
     """
     
     def __init__(self):
+        # Configuração do provider de LLM
+        self.llm_provider = os.getenv("LLM_PROVIDER", "gemini").lower()  # gemini ou ollama
+        self.ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        self.ollama_model = os.getenv("OLLAMA_MODEL", "")
+        self.ollama_timeout = int(os.getenv("OLLAMA_TIMEOUT", "600"))  # 10 minutos por padrão
+        
+        # Configuração Gemini (manter compatibilidade)
         self.api_key = os.getenv("GEMINI_API_KEY")
+        
+        # Inicializar o provider selecionado
+        if self.llm_provider == "ollama":
+            self._initialize_ollama()
+        else:
+            self._initialize_gemini()
+        
+        # Documentação da API CadQuery disponível para o LLM
+        self.cadquery_api_docs = self._load_cadquery_api_docs()
+        
+        # Diretório para salvar respostas do LLM
+        self.llm_responses_dir = Path("llm_responses")
+        self.llm_responses_dir.mkdir(exist_ok=True)
+        logger.info(f"Respostas do LLM serão salvas em: {self.llm_responses_dir.absolute()}")
+        
+    def _initialize_gemini(self):
+        """Inicializa configuração do Gemini"""
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY não encontrada nas variáveis de ambiente")
         
@@ -54,21 +80,58 @@ class PlanningModule:
             generation_config=self.generation_config
         )
         
-        # Documentação da API CadQuery disponível para o LLM
-        self.cadquery_api_docs = self._load_cadquery_api_docs()
+        logger.info(f"🤖 GEMINI INITIALIZED - Model: {self.current_model_name}")
         
-        # Diretório para salvar respostas do Gemini
-        self.gemini_responses_dir = Path("gemini_responses")
-        self.gemini_responses_dir.mkdir(exist_ok=True)
-        logger.info(f"Respostas do Gemini serão salvas em: {self.gemini_responses_dir.absolute()}")
+    def _initialize_ollama(self):
+        """Inicializa configuração do Ollama"""
+        # Verificar se modelo foi configurado
+        if not self.ollama_model:
+            raise ValueError("OLLAMA_MODEL não configurado. Configure OLLAMA_MODEL no arquivo .env com o nome do modelo desejado.")
         
-    def _save_gemini_interaction(self, prompt: str, response: str, context: str = "plan_generation") -> str:
+        self.current_model_name = self.ollama_model
+        
+        # Ollama não usa generation_config, mas vamos criar um placeholder para compatibilidade
+        self.generation_config = None
+        self.model = None  # Ollama não precisa de objeto model
+        
+        # Verificar se Ollama está disponível
+        try:
+            response = requests.get(f"{self.ollama_base_url}/api/tags", timeout=5)
+            if response.status_code == 200:
+                available_models = response.json().get('models', [])
+                model_names = [model.get('name', '') for model in available_models]
+                
+                logger.info(f"📋 OLLAMA - Modelos disponíveis: {model_names}")
+                
+                # Verificar se o modelo solicitado está disponível
+                if self.current_model_name not in model_names:
+                    logger.error(f"❌ OLLAMA - Modelo '{self.current_model_name}' não encontrado")
+                    logger.info(f"💡 OLLAMA - Para instalar o modelo, execute:")
+                    logger.info(f"   ollama pull {self.current_model_name}")
+                    
+                    # Tentar usar o primeiro modelo disponível como fallback
+                    if model_names:
+                        self.current_model_name = model_names[0]
+                        logger.info(f"🔄 OLLAMA - Usando modelo fallback: {self.current_model_name}")
+                    else:
+                        raise ValueError("Nenhum modelo disponível no Ollama. Execute 'ollama pull <modelo>' para instalar um modelo.")
+                
+                logger.info(f"🤖 OLLAMA INITIALIZED - Model: {self.current_model_name}")
+                logger.info(f"🌐 OLLAMA - Server: {self.ollama_base_url}")
+                
+            else:
+                raise ValueError(f"Ollama não disponível em {self.ollama_base_url}. Verifique se o serviço está rodando com 'ollama serve'")
+                
+        except requests.exceptions.RequestException as e:
+            raise ValueError(f"Erro ao conectar com Ollama em {self.ollama_base_url}: {e}. Verifique se o Ollama está rodando com 'ollama serve'")
+        
+    def _save_llm_interaction(self, prompt: str, response: str, context: str = "plan_generation") -> str:
         """
-        Salva interação com Gemini (prompt + resposta) em arquivo para análise.
+        Salva interação com LLM (prompt + resposta) em arquivo para análise.
         
         Args:
-            prompt: Prompt enviado ao Gemini
-            response: Resposta recebida do Gemini
+            prompt: Prompt enviado ao LLM
+            response: Resposta recebida do LLM
             context: Contexto da interação
             
         Returns:
@@ -79,16 +142,17 @@ class PlanningModule:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
             
             # Criar nome do arquivo
-            filename = f"{timestamp}_{context}.json"
-            file_path = self.gemini_responses_dir / filename
+            filename = f"{timestamp}_{context}_{self.llm_provider}.json"
+            file_path = self.llm_responses_dir / filename
             
             # Criar estrutura de dados
             interaction_data = {
                 "timestamp": datetime.now().isoformat(),
                 "context": context,
+                "llm_provider": self.llm_provider,
+                "model": self.current_model_name,
                 "prompt": prompt,
                 "response": response,
-                "model": self.current_model_name,
                 "prompt_length": len(prompt),
                 "response_length": len(response)
             }
@@ -97,11 +161,11 @@ class PlanningModule:
             with open(file_path, 'w', encoding='utf-8') as f:
                 json.dump(interaction_data, f, indent=2, ensure_ascii=False)
             
-            logger.info(f"Interação Gemini salva: {file_path}")
+            logger.info(f"Interação {self.llm_provider.upper()} salva: {file_path}")
             return str(file_path)
             
         except Exception as e:
-            logger.error(f"Erro ao salvar interação Gemini: {e}")
+            logger.error(f"Erro ao salvar interação {self.llm_provider.upper()}: {e}")
             return ""
     
     def _load_cadquery_api_docs(self) -> str:
@@ -336,18 +400,28 @@ class PlanningModule:
             query: Consulta estruturada contendo contexto e requisição
         """
         try:
-            model_choice = query.get('model_choice') or self.current_model_name
-            if model_choice != self.current_model_name:
-                self._initialize_model(model_choice)
+            # Log do modelo atual sendo usado
+            logger.info(f"🎯 PLANNING - Using {self.llm_provider.upper()} with model: {self.current_model_name}")
+            
+            # Para Ollama, sempre usar o modelo configurado, ignorar frontend
+            if self.llm_provider == "ollama":
+                # Não permitir mudança de modelo via frontend quando usando Ollama
+                if query.get('model_choice') and query.get('model_choice') != self.current_model_name:
+                    logger.warning(f"⚠️  OLLAMA - Ignorando seleção do frontend '{query.get('model_choice')}', usando modelo configurado: {self.current_model_name}")
+            else:
+                # Para Gemini, permitir mudança via frontend
+                model_choice = query.get('model_choice') or self.current_model_name
+                if model_choice != self.current_model_name:
+                    self._initialize_model(model_choice)
 
-            # Construir prompt estruturado para o Gemini
+            # Construir prompt estruturado para o LLM
             prompt = self._build_prompt(query)
             
-            # Fazer chamada para o Gemini
-            response = await self._call_gemini(prompt, "plan_generation")
+            # Fazer chamada para o LLM
+            response = await self._call_llm(prompt, "plan_generation")
             
-            # Parsear resposta do Gemini
-            llm_response = self._parse_gemini_response(response)
+            # Parsear resposta do LLM
+            llm_response = self._parse_llm_response(response)
             
             # Validar plano de execução se presente
             if llm_response.execution_plan:
@@ -359,10 +433,11 @@ class PlanningModule:
                         query, llm_response, validation
                     )
             
+            logger.info(f"✅ PLANNING - Successfully generated plan using {self.llm_provider.upper()}")
             return llm_response
             
         except Exception as e:
-            logger.error(f"Erro ao gerar plano: {e}")
+            logger.error(f"❌ PLANNING ERROR - {self.llm_provider.upper()}: {e}")
             return LLMResponse(
                 intention_type="error",
                 response_text=f"Erro interno do sistema de planejamento: {str(e)}",
@@ -370,7 +445,7 @@ class PlanningModule:
             )
     
     def _build_prompt(self, query: Dict[str, Any]) -> str:
-        """Constrói prompt estruturado para o Gemini com schema JSON definido"""
+        """Constrói prompt estruturado para o LLM com schema JSON definido"""
         
         # Schema JSON expandido para permitir código CadQuery direto
         json_schema = {
@@ -558,30 +633,169 @@ class PlanningModule:
         
         return "\n".join(formatted)
     
-    async def _call_gemini(self, prompt: str, context: str = "plan_generation") -> str:
+    async def _call_llm(self, prompt: str, context: str = "plan_generation") -> str:
+        """Faz chamada assíncrona para o LLM"""
+        try:
+            logger.info(f"Enviando prompt para {self.llm_provider.upper()} (contexto: {context})")
+            
+            if self.llm_provider == "ollama":
+                response_text = await self._call_ollama(prompt)
+            else:
+                response_text = await self._call_gemini(prompt)
+            
+            logger.info(f"Resposta recebida do {self.llm_provider.upper()}: {len(response_text)} caracteres")
+            
+            # Salvar interação para análise
+            self._save_llm_interaction(prompt, response_text, context)
+            
+            return response_text
+        except Exception as e:
+            logger.error(f"Erro na chamada do {self.llm_provider.upper()}: {e}")
+            raise
+    
+    async def _call_ollama(self, prompt: str) -> str:
+        """Faz chamada assíncrona para o Ollama com streaming para debug"""
+        try:
+            logger.info(f"⏱️  OLLAMA - Using timeout: {self.ollama_timeout} seconds")
+            logger.info(f"📝 OLLAMA - Prompt length: {len(prompt)} characters")
+            
+            # Construir payload para Ollama com streaming
+            payload = {
+                "model": self.current_model_name,
+                "prompt": prompt,
+                "stream": True,  # Habilitar streaming para debug
+                "options": {
+                    "temperature": 0.1,
+                    "num_predict": 15000,
+                    "top_p": 0.9,
+                    "top_k": 40
+                }
+            }
+            
+            logger.info(f"🚀 OLLAMA - Starting request to {self.ollama_base_url}/api/generate")
+            logger.info(f"🤖 OLLAMA - Model: {self.current_model_name}")
+            
+            # Fazer requisição assíncrona com streaming
+            loop = asyncio.get_event_loop()
+            
+            def make_streaming_request():
+                """Função para fazer requisição com streaming"""
+                import time
+                start_time = time.time()
+                
+                try:
+                    response = requests.post(
+                        f"{self.ollama_base_url}/api/generate",
+                        json=payload,
+                        timeout=self.ollama_timeout,
+                        stream=True  # Habilitar streaming
+                    )
+                    
+                    if response.status_code != 200:
+                        logger.error(f"❌ OLLAMA - HTTP Error {response.status_code}: {response.text}")
+                        raise ValueError(f"Ollama retornou status {response.status_code}: {response.text}")
+                    
+                    logger.info(f"✅ OLLAMA - Connection established, starting to receive data...")
+                    
+                    # Processar resposta em streaming
+                    full_response = ""
+                    chunk_count = 0
+                    last_log_time = time.time()
+                    
+                    for line in response.iter_lines():
+                        if line:
+                            chunk_count += 1
+                            current_time = time.time()
+
+                            print("current line received: ", line)
+                            
+                            # Log progresso a cada 5 segundos
+                            if current_time - last_log_time > 5:
+                                elapsed = current_time - start_time
+                                logger.info(f"⏳ OLLAMA - Receiving data... {chunk_count} chunks, {elapsed:.1f}s elapsed")
+                                logger.info(f"📊 OLLAMA - Response so far: {len(full_response)} chars")
+                                last_log_time = current_time
+                            
+                            try:
+                                chunk_data = json.loads(line.decode('utf-8'))
+                                
+                                # Verificar se há erro no chunk
+                                if 'error' in chunk_data:
+                                    logger.error(f"❌ OLLAMA - Error in chunk: {chunk_data['error']}")
+                                    raise ValueError(f"Ollama error: {chunk_data['error']}")
+                                
+                                # Adicionar resposta parcial
+                                if 'response' in chunk_data:
+                                    partial_response = chunk_data['response']
+                                    full_response += partial_response
+                                    
+                                    # Log primeira resposta
+                                    if chunk_count == 1:
+                                        logger.info(f"🎉 OLLAMA - First response chunk received: '{partial_response[:50]}...'")
+                                
+                                # Verificar se terminou
+                                if chunk_data.get('done', False):
+                                    total_time = time.time() - start_time
+                                    logger.info(f"✅ OLLAMA - Stream completed in {total_time:.1f}s")
+                                    logger.info(f"📈 OLLAMA - Total chunks: {chunk_count}")
+                                    logger.info(f"📝 OLLAMA - Final response length: {len(full_response)} chars")
+                                    break
+                                    
+                            except json.JSONDecodeError as e:
+                                logger.warning(f"⚠️  OLLAMA - Invalid JSON chunk: {line[:100]}...")
+                                continue
+                    
+                    if not full_response:
+                        logger.error("❌ OLLAMA - No response received from stream")
+                        raise ValueError("Ollama retornou resposta vazia")
+                    
+                    logger.info(f"🎯 OLLAMA - Response preview: '{full_response[:100]}...'")
+                    return full_response
+                    
+                except requests.exceptions.Timeout:
+                    elapsed = time.time() - start_time
+                    logger.error(f"⏰ OLLAMA - Timeout after {elapsed:.1f}s (limit: {self.ollama_timeout}s)")
+                    raise
+                except requests.exceptions.ConnectionError as e:
+                    logger.error(f"🔌 OLLAMA - Connection error: {e}")
+                    raise
+                except Exception as e:
+                    elapsed = time.time() - start_time
+                    logger.error(f"💥 OLLAMA - Unexpected error after {elapsed:.1f}s: {e}")
+                    raise
+            
+            # Executar requisição em thread separada
+            response_text = await loop.run_in_executor(None, make_streaming_request)
+            
+            logger.info(f"✅ OLLAMA - Request completed successfully")
+            return response_text
+            
+        except requests.exceptions.Timeout:
+            logger.error(f"⏰ OLLAMA - Request timed out after {self.ollama_timeout} seconds")
+            logger.error("💡 OLLAMA - Try increasing OLLAMA_TIMEOUT or using a smaller model")
+            raise ValueError(f"Ollama timeout após {self.ollama_timeout} segundos. Considere aumentar OLLAMA_TIMEOUT no .env ou usar um modelo menor.")
+        except requests.exceptions.RequestException as e:
+            logger.error(f"🔌 OLLAMA - Connection error: {e}")
+            raise ValueError(f"Erro de conexão com Ollama: {e}")
+        except Exception as e:
+            logger.error(f"💥 OLLAMA - Unexpected error: {e}")
+            raise ValueError(f"Erro na chamada Ollama: {e}")
+    
+    async def _call_gemini(self, prompt: str) -> str:
         """Faz chamada assíncrona para o Gemini"""
         try:
-            import asyncio
-            logger.info(f"Enviando prompt para Gemini (contexto: {context})")
-            
             # Gemini não é nativamente async, então executamos em thread
             response = await asyncio.get_event_loop().run_in_executor(
                 None, self.model.generate_content, prompt
             )
             
-            response_text = response.text
-            logger.info(f"Resposta recebida do Gemini: {len(response_text)} caracteres")
+            return response.text
             
-            # Salvar interação para análise
-            self._save_gemini_interaction(prompt, response_text, context)
-            
-            return response_text
         except Exception as e:
-            logger.error(f"Erro na chamada do Gemini: {e}")
-            raise
+            raise ValueError(f"Erro na chamada Gemini: {e}")
     
-    def _parse_gemini_response(self, response_text: str) -> LLMResponse:
-        """Parseia resposta JSON estruturada do Gemini com validação robusta"""
+    def _parse_llm_response(self, response_text: str) -> LLMResponse:
+        """Parseia resposta JSON estruturada do LLM com validação robusta"""
         try:
             # Limpar resposta de possíveis artefatos
             cleaned_response = self._clean_json_response(response_text)
@@ -590,9 +804,9 @@ class PlanningModule:
             try:
                 data = json.loads(cleaned_response)
             except json.JSONDecodeError as e:
-                logger.error(f"JSON inválido recebido do Gemini: {e}")
+                logger.error(f"JSON inválido recebido do {self.llm_provider.upper()}: {e}")
                 logger.error(f"Resposta limpa: {cleaned_response[:500]}...")
-                return self._create_error_response("Resposta do Gemini não é JSON válido")
+                return self._create_error_response("Resposta do LLM não é JSON válido")
             
             # Validar estrutura mínima
             if not isinstance(data, dict):
@@ -626,11 +840,11 @@ class PlanningModule:
                 clarification_questions=list(data.get('clarification_questions', []))
             )
 
-            logger.info(f"Resposta do Gemini parseada com sucesso: {response.intention_type}")
+            logger.info(f"Resposta do {self.llm_provider.upper()} parseada com sucesso: {response.intention_type}")
             return response
             
         except Exception as e:
-            logger.error(f"Erro inesperado ao parsear resposta do Gemini: {e}")
+            logger.error(f"Erro inesperado ao parsear resposta do {self.llm_provider.upper()}: {e}")
             logger.error(f"Resposta original: {response_text[:200]}...")
             return self._create_error_response(f"Erro interno: {str(e)}")
     
@@ -857,16 +1071,30 @@ class PlanningModule:
             """
         
         try:
-            response = await self._call_gemini(corrected_prompt, "auto_correction")
+            response = await self._call_llm(corrected_prompt, "auto_correction")
 
-            return self._parse_gemini_response(response)
+            return self._parse_llm_response(response)
         except Exception as e:
             logger.error(f"Erro na auto-correção: {e}")
             return failed_response  # Retorna original se não conseguir corrigir 
 
     def _initialize_model(self, model_name: str):
-        self.current_model_name = model_name
-        self.model = genai.GenerativeModel(
-            model_name,
-            generation_config=self.generation_config
-        ) 
+        """Inicializa modelo específico (compatibilidade com código existente)"""
+        if self.llm_provider == "ollama":
+            # Para Ollama, apenas atualizar o nome do modelo
+            old_model = self.current_model_name
+            self.current_model_name = model_name
+            logger.info(f"🔄 OLLAMA - Model changed from {old_model} to {model_name}")
+        else:
+            # Para Gemini, recriar o modelo
+            try:
+                self.current_model_name = model_name
+                self.model = genai.GenerativeModel(
+                    model_name,
+                    generation_config=self.generation_config
+                )
+                logger.info(f"🔄 GEMINI - Model changed to {model_name}")
+            except Exception as e:
+                logger.error(f"❌ GEMINI - Error changing model to {model_name}: {e}")
+                # Manter modelo anterior em caso de erro
+                raise 

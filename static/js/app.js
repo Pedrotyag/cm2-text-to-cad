@@ -7,6 +7,7 @@ class CM2App {
         this.isProcessing = false;
         this.messageCount = 0;
         this.selectedModel = 'gemini-2.5-flash';
+        this.currentModelInfo = null;
         
         // Inicializar componentes
         this.threeSetup = new ThreeSetup('viewport-3d');
@@ -70,7 +71,17 @@ class CM2App {
             const data = await response.json();
             this.sessionId = data.session_id;
             
+            // Atualizar informações do modelo se disponíveis
+            if (data.model_info) {
+                this.currentModelInfo = data.model_info;
+                this.updateModelDisplay();
+            } else {
+                // Se não veio na resposta, buscar separadamente
+                await this.refreshModelInfo();
+            }
+            
             console.log('📝 Sessão iniciada:', this.sessionId);
+            console.log('🤖 Modelo atual:', this.currentModelInfo);
             document.getElementById('session-info').textContent = `Conectando WebSocket...`;
             
         } catch (error) {
@@ -87,6 +98,11 @@ class CM2App {
                 console.log('🔌 WebSocket conectado');
                 this.isConnected = true;
                 this.updateConnectionStatus(true);
+                
+                // Solicitar informações do modelo se ainda não temos
+                if (!this.currentModelInfo) {
+                    this.refreshModelInfo();
+                }
             },
             
             onClose: (event) => {
@@ -228,27 +244,47 @@ class CM2App {
     }
     
     handleWebSocketMessage(data) {
-        console.log('📨 Mensagem recebida:', data.type);
+        console.log('📨 Mensagem recebida:', data);
         
-        switch (data.type) {
-            case 'system_response':
-                this.handleSystemResponse(data.data);
-                break;
-                
-            case 'parameter_updated':
-                this.handleParameterUpdate(data.data);
-                break;
-                
-            case 'session_state':
-                this.handleSessionState(data.data);
-                break;
-                
-            case 'error':
-                this.showError(data.data.message);
-                break;
-                
-            default:
-                console.warn('⚠️ Tipo de mensagem desconhecido:', data.type);
+        try {
+            // Atualizar informações do modelo se disponíveis
+            if (data.model_info) {
+                this.currentModelInfo = data.model_info;
+                this.updateModelDisplay();
+            }
+            
+            switch (data.type) {
+                case 'model_info':
+                    // Mensagem específica de informações do modelo
+                    if (data.model_info) {
+                        this.currentModelInfo = data.model_info;
+                        this.updateModelDisplay();
+                        console.log('🤖 Model info received:', this.currentModelInfo);
+                    }
+                    break;
+                    
+                case 'system_response':
+                    this.handleSystemResponse(data.response);
+                    break;
+                    
+                case 'parameter_update':
+                    this.handleParameterUpdate(data);
+                    break;
+                    
+                case 'session_state':
+                    this.handleSessionState(data.state);
+                    break;
+                    
+                case 'error':
+                    this.showError(data.message || 'Erro desconhecido');
+                    break;
+                    
+                default:
+                    console.warn('Tipo de mensagem desconhecido:', data.type);
+            }
+        } catch (error) {
+            console.error('❌ Erro ao processar mensagem:', error);
+            this.showError('Erro ao processar resposta do servidor');
         }
     }
     
@@ -577,29 +613,22 @@ class CM2App {
     }
     
     updateConnectionStatus(connected) {
-        const statusDot = document.getElementById('connection-status');
-        const sessionInfo = document.getElementById('session-info');
-        
-        console.log('🔄 Atualizando status de conexão:', connected ? 'CONECTADO' : 'DESCONECTADO');
+        const statusElement = document.getElementById('session-info');
+        const statusIndicator = document.getElementById('connection-status');
         
         if (connected) {
-            statusDot.className = 'status-dot online';
-            sessionInfo.textContent = `Conectado - ${this.sessionId?.slice(0, 8) || 'N/A'}...`;
-            
-            // Animação de sucesso
-            statusDot.style.animation = 'pulse 0.5s ease-out';
-            setTimeout(() => {
-                statusDot.style.animation = 'pulse 2s infinite';
-            }, 500);
-            
-            console.log('✅ Status atualizado para CONECTADO');
-            
+            statusElement.innerHTML = `
+                <div class="status-container">
+                    <span class="status-text">Sessão: ${this.sessionId}</span>
+                    ${this.getModelStatusHTML()}
+                </div>
+            `;
+            statusIndicator.className = 'status-indicator connected';
+            statusIndicator.title = 'Conectado';
         } else {
-            statusDot.className = 'status-dot offline';
-            sessionInfo.textContent = 'Desconectado';
-            statusDot.style.animation = 'none';
-            
-            console.log('❌ Status atualizado para DESCONECTADO');
+            statusElement.textContent = 'Desconectado - Tentando reconectar...';
+            statusIndicator.className = 'status-indicator disconnected';
+            statusIndicator.title = 'Desconectado';
         }
     }
     
@@ -1189,6 +1218,102 @@ class CM2App {
                 document.body.removeChild(notification);
             }, 300);
         }, 3000);
+    }
+
+    updateModelDisplay() {
+        // Atualizar display do modelo na interface
+        const modelDisplays = document.querySelectorAll('.model-info-display');
+        modelDisplays.forEach(display => {
+            display.innerHTML = this.getModelStatusHTML();
+        });
+        
+        // Atualizar status na barra superior se conectado
+        if (this.isConnected) {
+            this.updateConnectionStatus(true);
+        }
+        
+        // Atualizar seletor de modelo baseado no provider
+        this.updateModelSelector();
+        
+        // Log detalhado
+        if (this.currentModelInfo) {
+            console.log(`🤖 Modelo ativo: ${this.currentModelInfo.provider} - ${this.currentModelInfo.model_name}`);
+            if (this.currentModelInfo.is_local) {
+                console.log(`🏠 Modelo local em: ${this.currentModelInfo.base_url}`);
+            }
+        }
+    }
+
+    updateModelSelector() {
+        const modelSelect = document.getElementById('model-select');
+        if (!modelSelect || !this.currentModelInfo) return;
+        
+        if (this.currentModelInfo.is_local) {
+            // Ollama - desabilitar seletor e mostrar modelo atual
+            modelSelect.disabled = true;
+            modelSelect.innerHTML = `
+                <option value="${this.currentModelInfo.model_name}">
+                    🏠 ${this.currentModelInfo.model_name}
+                </option>
+            `;
+            modelSelect.title = `Usando Ollama - Modelo configurado no servidor: ${this.currentModelInfo.model_name}`;
+        } else {
+            // Gemini - habilitar seletor
+            modelSelect.disabled = false;
+            modelSelect.innerHTML = `
+                <option value="gemini-2.5-flash">☁️ Gemini Flash</option>
+                <option value="gemini-2.5-pro">☁️ Gemini Pro</option>
+            `;
+            modelSelect.value = this.currentModelInfo.model_name;
+            modelSelect.title = "Selecione o modelo Gemini";
+        }
+    }
+
+    getModelStatusHTML() {
+        if (!this.currentModelInfo) {
+            return '<span class="model-status loading">🔄 Carregando modelo...</span>';
+        }
+        
+        // Check if model info has error
+        if (this.currentModelInfo.status === 'error') {
+            return '<span class="model-status error">❌ Erro no modelo</span>';
+        }
+        
+        const isLocal = this.currentModelInfo.is_local;
+        const provider = this.currentModelInfo.provider;
+        const modelName = this.currentModelInfo.model_name;
+        
+        // Encurtar nome do modelo se muito longo
+        const shortModelName = modelName.length > 30 
+            ? modelName.substring(0, 30) + '...' 
+            : modelName;
+        
+        const statusClass = isLocal ? 'local' : 'cloud';
+        const icon = isLocal ? '🏠' : '☁️';
+        const tooltip = `${provider} - ${modelName} (${isLocal ? 'Local' : 'Cloud'})`;
+        
+        return `
+            <span class="model-status ${statusClass}" title="${tooltip}">
+                ${icon} ${provider}: ${shortModelName}
+            </span>
+        `;
+    }
+
+    async refreshModelInfo() {
+        try {
+            console.log('🔄 Refreshing model info...');
+            const response = await fetch('/api/model/info');
+            if (response.ok) {
+                const modelInfo = await response.json();
+                this.currentModelInfo = modelInfo;
+                this.updateModelDisplay();
+                console.log('✅ Model info refreshed:', modelInfo);
+            } else {
+                console.error('❌ Failed to fetch model info:', response.status);
+            }
+        } catch (error) {
+            console.error('❌ Erro ao atualizar informações do modelo:', error);
+        }
     }
 }
 
