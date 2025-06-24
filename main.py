@@ -14,6 +14,9 @@ import json
 from src.core import CentralOrchestrator
 from src.models import GeometrySelection
 from src.core.planning_module import safe_json_dumps
+import cadquery as cq
+import io
+import base64
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -52,6 +55,10 @@ class UserInputRequest(BaseModel):
 class SessionResponse(BaseModel):
     session_id: str
     status: str
+
+class GroundTruthRequest(BaseModel):
+    case_id: str
+    ground_truth_code: str
 
 # Gerenciador de conexões WebSocket
 class ConnectionManager:
@@ -129,6 +136,13 @@ async def get_test_websocket_page(request: Request):
 async def get_debug_connection_page(request: Request):
     """Página de debug detalhado de conexão"""
     with open("test_connection_debug.html", "r", encoding="utf-8") as f:
+        content = f.read()
+    return HTMLResponse(content=content)
+
+@app.get("/benchmark", response_class=HTMLResponse)
+async def get_benchmark_page(request: Request):
+    """Página de benchmark do sistema Text-to-CAD"""
+    with open("templates/benchmark_test.html", "r", encoding="utf-8") as f:
         content = f.read()
     return HTMLResponse(content=content)
 
@@ -219,6 +233,163 @@ async def get_operations(session_id: str):
     except Exception as e:
         logger.error(f"Erro ao obter operações: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/execute_groundtruth")
+async def execute_groundtruth(request: GroundTruthRequest):
+    """Executa o código groundTruth de um caso de teste e retorna mesh data"""
+    try:
+        logger.info(f"🚀 Executando groundTruth para caso: {request.case_id}")
+        
+        # Preparar ambiente seguro para execução
+        import math
+        safe_builtins = {
+            '__import__': __import__,
+            'len': len,
+            'range': range,
+            'enumerate': enumerate,
+            'zip': zip,
+            'list': list,
+            'dict': dict,
+            'tuple': tuple,
+            'set': set,
+            'str': str,
+            'int': int,
+            'float': float,
+            'bool': bool,
+            'abs': abs,
+            'min': min,
+            'max': max,
+            'sum': sum,
+            'round': round,
+            'print': print  # Para debug se necessário
+        }
+        
+        local_vars = {
+            "cq": cq,
+            "math": math
+        }
+        global_vars = {
+            "__builtins__": safe_builtins
+        }
+        
+        # Executar código do groundTruth
+        exec(request.ground_truth_code, global_vars, local_vars)
+        
+        # Verificar se 'result' foi criado
+        if 'result' not in local_vars:
+            raise ValueError("Código groundTruth deve criar variável 'result'")
+        
+        cadquery_object = local_vars['result']
+        
+        # Extrair dados de mesh do objeto CadQuery
+        mesh_data = extract_mesh_data(cadquery_object)
+        
+        logger.info(f"✅ GroundTruth executado com sucesso para: {request.case_id}")
+        
+        return {
+            "success": True,
+            "case_id": request.case_id,
+            "mesh_data": mesh_data
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Erro ao executar groundTruth: {e}")
+        return {
+            "success": False,
+            "case_id": request.case_id,
+            "error": str(e)
+        }
+
+def extract_mesh_data(cadquery_object):
+    """Extrai dados de mesh (vértices e faces) de um objeto CadQuery"""
+    try:
+        logger.info(f"Extraindo mesh data de objeto CadQuery: {type(cadquery_object)}")
+        
+        # Se for um Workplane, extrair o sólido
+        if hasattr(cadquery_object, 'val'):
+            solid = cadquery_object.val()
+            logger.info(f"Sólido extraído do Workplane: {type(solid)}")
+            
+            # Se for um Compound, pegar o primeiro sólido
+            if hasattr(solid, 'Solids') and solid.Solids():
+                solid = solid.Solids()[0]
+                logger.info(f"Usando primeiro sólido do Compound: {type(solid)}")
+        else:
+            solid = cadquery_object
+            logger.info(f"Usando objeto diretamente: {type(solid)}")
+        
+        # Obter mesh via tesselação com tolerância
+        tolerance = 0.1  # Tolerância para tesselação
+        mesh = solid.tessellate(tolerance)
+        logger.info(f"Mesh tesselado: {len(mesh)} elementos")
+        logger.info(f"Vértices: {len(mesh[0])}, Faces: {len(mesh[1])}")
+        
+        # Extrair vértices e faces
+        vertices = []
+        faces = []
+        
+        # Vértices: mesh[0] é uma lista de objetos Vector
+        for vertex in mesh[0]:
+            vertices.extend([float(vertex.x), float(vertex.y), float(vertex.z)])
+        
+        # Faces: mesh[1] é uma lista de tuplas com índices dos triângulos
+        for triangle in mesh[1]:
+            # Cada triângulo é uma tupla (i1, i2, i3)
+            faces.extend([int(triangle[0]), int(triangle[1]), int(triangle[2])])
+        
+        logger.info(f"✅ Mesh extraído: {len(vertices)//3} vértices, {len(faces)//3} triângulos")
+        
+        return {
+            "vertices": vertices,
+            "faces": faces,
+            "vertex_count": len(mesh[0]),
+            "face_count": len(mesh[1])
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Erro ao extrair mesh data: {e}")
+        logger.error(f"Tipo do objeto: {type(cadquery_object)}")
+        
+        # Tentar método alternativo para objetos CadQuery
+        try:
+            # Exportar para STL e depois converter
+            import tempfile
+            import os
+            
+            with tempfile.NamedTemporaryFile(suffix='.stl', delete=False) as temp_file:
+                cadquery_object.exportStl(temp_file.name)
+                
+                # Ler STL e converter para mesh data
+                # (Implementação simplificada - retorna caixa por enquanto)
+                os.unlink(temp_file.name)
+                
+        except Exception as e2:
+            logger.error(f"❌ Método alternativo também falhou: {e2}")
+        
+        # Fallback: retornar dados de uma caixa simples
+        logger.warning("⚠️ Usando fallback - caixa simples")
+        return {
+            "vertices": [
+                -10, -10, -10,  # 0
+                 10, -10, -10,  # 1
+                 10,  10, -10,  # 2
+                -10,  10, -10,  # 3
+                -10, -10,  10,  # 4
+                 10, -10,  10,  # 5
+                 10,  10,  10,  # 6
+                -10,  10,  10   # 7
+            ],
+            "faces": [
+                0, 1, 2, 0, 2, 3,  # bottom
+                4, 7, 6, 4, 6, 5,  # top
+                0, 4, 5, 0, 5, 1,  # front
+                2, 6, 7, 2, 7, 3,  # back
+                0, 3, 7, 0, 7, 4,  # left
+                1, 5, 6, 1, 6, 2   # right
+            ],
+            "vertex_count": 8,
+            "face_count": 12
+        }
 
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):

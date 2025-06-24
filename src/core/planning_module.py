@@ -542,8 +542,181 @@ class PlanningModule:
             ## Available CadQuery Operations
             {self.cadquery_api_docs}
 
-            ## JSON Schema
-            {json.dumps(json_schema)}
+            # THINKING PROCESS (Chain-of-Thought):
+            Before generating the JSON response, think through these steps:
+            1. **Analyze Request**: What does the user want to create or modify?
+            2. **Identify Type**: Is this creation, modification, query, or error handling?
+            3. **Plan Operations**: What CadQuery operations are needed?
+            4. **Parameter Setup**: What parameters should be configurable?
+            5. **Validation**: Does this plan make geometric sense?
+
+            # FEW-SHOT EXAMPLES:
+
+            ## Example 1 - Simple Cylinder with Direct CadQuery Code:
+            User Request: "Create a cylinder with radius 10 and height 20"
+            
+            Correct JSON Response:
+            {{
+                "intention_type": "creation",
+                "response_text": "I'll create a cylinder with the specified dimensions using parametric CadQuery code.",
+                "execution_plan": {{
+                    "id": "cylinder_creation_001",
+                    "description": "Create parametric cylinder",
+                    "cadquery_code": "result = cq.Workplane('XY').cylinder(cylinder_height, cylinder_radius)",
+                    "parameters": {{
+                        "cylinder_height": 20.0,
+                        "cylinder_radius": 10.0
+                    }},
+                    "ast_nodes": [],
+                    "new_parameters": {{
+                        "cylinder_height": 20.0,
+                        "cylinder_radius": 10.0
+                    }},
+                    "affected_operations": []
+                }},
+                "parameter_updates": {{}},
+                "requires_clarification": false,
+                "clarification_questions": [],
+                "confidence": 0.95
+            }}
+
+            ## Example 2 - Screw with Safe Fillet:
+            User Request: "Create a screw with curved head using fillet"
+            
+            Correct JSON Response:
+            {{
+                "intention_type": "creation",
+                "response_text": "I'll create a screw with a curved head using safe fillet techniques.",
+                "execution_plan": {{
+                    "id": "safe_fillet_screw",
+                    "description": "Create screw with safe fillet on head",
+                    "cadquery_code": "# Create screw body\\nscrew_body = cq.Workplane('XY').cylinder(body_length, body_diameter/2)\\n\\n# Create screw head\\nscrew_head = cq.Workplane('XY').cylinder(head_height, head_diameter/2)\\n\\n# Calculate safe fillet radius\\nsafe_fillet_radius = min(fillet_radius, head_height/2, (head_diameter - body_diameter)/4)\\n\\n# Apply safe fillet to head edges\\nscrew_head = screw_head.edges().fillet(safe_fillet_radius)\\n\\n# Position head on body\\nscrew_head = screw_head.translate((0, 0, body_length))\\n\\n# Combine parts\\nresult = screw_body.union(screw_head)",
+                    "parameters": {{
+                        "body_diameter": 6.0,
+                        "body_length": 20.0,
+                        "head_diameter": 10.0,
+                        "head_height": 4.0,
+                        "fillet_radius": 2.0
+                    }},
+                    "ast_nodes": [],
+                    "new_parameters": {{
+                        "body_diameter": 6.0,
+                        "body_length": 20.0,
+                        "head_diameter": 10.0,
+                        "head_height": 4.0,
+                        "fillet_radius": 2.0
+                    }},
+                    "affected_operations": []
+                }},
+                "parameter_updates": {{}},
+                "requires_clarification": false,
+                "clarification_questions": [],
+                "confidence": 0.95
+            }}
+
+            ## Example 3 - Bearing with Advanced CadQuery Operations:
+            User Request: "Create a ball bearing 6200 with outer ring, inner ring, and balls"
+            
+            Correct JSON Response:
+            {{
+                "intention_type": "creation",
+                "response_text": "I'll create a complete ball bearing 6200 with all components.",
+                "execution_plan": {{
+                    "id": "bearing_6200_complete",
+                    "description": "Create ball bearing with outer ring, inner ring, and balls",
+                    "cadquery_code": "import math\\n\\n# Outer ring\\nouter_ring = (cq.Workplane('XY')\\n              .cylinder(bearing_width, bearing_od/2)\\n              .cylinder(bearing_width, (bearing_od - ball_diameter)/2, combine=False))\\n\\n# Inner ring\\ninner_ring = (cq.Workplane('XY')\\n              .cylinder(bearing_width, (bearing_id + ball_diameter)/2)\\n              .cylinder(bearing_width, bearing_id/2, combine=False))\\n\\n# Ball pitch circle\\npitch_radius = (bearing_od - bearing_id - ball_diameter) / 2 + bearing_id/2\\n\\n# Create single ball\\nball = cq.Workplane('XY').sphere(ball_diameter/2)\\n\\n# Create array of balls\\nballs = (cq.Workplane('XY')\\n         .center(pitch_radius, 0)\\n         .sphere(ball_diameter/2)\\n         .polarArray(radius=0, startAngle=0, angle=360, count=num_balls))\\n\\n# Combine all components\\nresult = outer_ring.union(inner_ring).union(balls)",
+                    "parameters": {{
+                        "bearing_od": 30.0,
+                        "bearing_id": 10.0,
+                        "bearing_width": 9.0,
+                        "ball_diameter": 4.0,
+                        "num_balls": 8
+                    }},
+                    "ast_nodes": [],
+                    "new_parameters": {{
+                        "bearing_od": 30.0,
+                        "bearing_id": 10.0,
+                        "bearing_width": 9.0,
+                        "ball_diameter": 4.0,
+                        "num_balls": 8
+                    }},
+                    "affected_operations": []
+                }},
+                "parameter_updates": {{}},
+                "requires_clarification": false,
+                "clarification_questions": [],
+                "confidence": 0.85
+            }}
+
+            ## Example 4 - Cilindro com Furo Contextual (TÉCNICA CORRETA):
+            User Request: "Create a cylinder with a hole through it"
+            
+            Correct JSON Response:
+            {{
+                "intention_type": "creation",
+                "response_text": "I'll create a cylinder with a contextual hole using proper face selection to ensure correct positioning.",
+                "execution_plan": {{
+                    "id": "contextual_hole_cylinder",
+                    "description": "Create cylinder with contextual hole using face selection",
+                    "cadquery_code": "# Create cylinder with base on XY plane (not centered)\\nbase_cylinder = cq.Workplane('XY').cylinder(cylinder_height, cylinder_radius, centered=False)\\n\\n# Select top face and create contextual hole\\nresult = base_cylinder.faces('>Z').hole(hole_diameter)",
+                    "parameters": {{
+                        "cylinder_height": 40.0,
+                        "cylinder_radius": 20.0,
+                        "hole_diameter": 8.0
+                    }},
+                    "ast_nodes": [],
+                    "new_parameters": {{
+                        "cylinder_height": 40.0,
+                        "cylinder_radius": 20.0,
+                        "hole_diameter": 8.0
+                    }},
+                    "affected_operations": []
+                }},
+                "parameter_updates": {{}},
+                "requires_clarification": false,
+                "clarification_questions": [],
+                "confidence": 0.95
+            }}
+
+            # JSON SCHEMA TO FOLLOW:
+            {json.dumps(json_schema, indent=2)}
+
+            # CRITICAL INSTRUCTIONS:
+            1. **Output Format**: Return ONLY valid JSON - no markdown, no code blocks, no extra text
+            2. **CadQuery Code**: Use the "cadquery_code" field for direct CadQuery Python code
+            3. **Parameter Names**: Always use descriptive variable names, never hardcoded values
+            4. **Code Freedom**: You have TOTAL FREEDOM to use any CadQuery operations from the API documentation
+            5. **Complex Geometries**: Feel free to create sophisticated mechanical components with multiple operations
+            6. **Code Structure**: Use \\n for line breaks in cadquery_code, create intermediate variables as needed
+            7. **Final Result**: Always assign the final geometry to a variable named 'result'
+            8. **Imports**: Include necessary imports like 'import math' if needed within the cadquery_code
+            9. **Real Engineering**: Create actual engineering components, not simplified primitives
+            10. **FILETES SEGUROS**: SEMPRE use .edges() sem seletores específicos para filetes, e calcule raio máximo seguro
+            11. **EVITAR SELETORES**: NUNCA use "|X", "|Y", "|Z" para arestas - use .edges() ou .faces().edges()
+            
+            # PROBLEMA CRÍTICO: AMBIGUIDADE DO "MODELO MENTAL" vs. LÓGICA DO CÓDIGO
+            12. **FUROS CONTEXTUAIS**: Ao gerar código CadQuery para adicionar furos ou recortes, SEMPRE que possível, selecione primeiro a face de referência (ex: .faces('>Z')) antes de aplicar a operação (.hole(), .cut(), etc.). Isso garante que a operação seja aplicada corretamente em relação à geometria existente.
+            
+            **Exemplo CORRETO para furos:**
+            ```
+            # 1. Criar cilindro com base no plano (não centralizado)
+            base_cylinder = cq.Workplane("XY").cylinder(height, radius, centered=False)
+            
+            # 2. Selecionar face superior e fazer furo contextual
+            result = base_cylinder.faces(">Z").hole(hole_diameter)
+            ```
+            
+            **Exemplo INCORRETO (evitar):**
+            ```
+            # PROBLEMA: Furo "no vácuo" sem contexto da geometria
+            cylinder = cq.Workplane("XY").cylinder(height, radius)
+            hole = cq.Workplane("XY").hole(diameter)  # Posição ambígua!
+            result = cylinder.cut(hole)
+            ```
+            
+            13. **POSICIONAMENTO EXPLÍCITO**: Para geometrias que devem apoiar em uma base (como cilindros com furos), use `centered=False` para posicionar a base no plano XY, eliminando ambiguidade de coordenadas.
+            
+            14. **OPERAÇÕES RELACIONAIS**: Sempre que uma operação depende de outra geometria existente (furos, chanfros, filetes), use seletores de face/aresta (.faces(">Z"), .edges()) para estabelecer contexto geométrico claro.
 
             Provide a response in JSON only.
         """).strip()
@@ -804,9 +977,9 @@ class PlanningModule:
             try:
                 data = json.loads(cleaned_response)
             except json.JSONDecodeError as e:
-                logger.error(f"JSON inválido recebido do {self.llm_provider.upper()}: {e}")
-                logger.error(f"Resposta limpa: {cleaned_response[:500]}...")
-                return self._create_error_response("Resposta do LLM não é JSON válido")
+                logger.error(f"JSON inválido recebido do Gemini: {e}")
+                logger.error(f"Resposta limpa: {cleaned_response[:5000]}...")
+                return self._create_error_response("Resposta do Gemini não é JSON válido")
             
             # Validar estrutura mínima
             if not isinstance(data, dict):
@@ -844,8 +1017,8 @@ class PlanningModule:
             return response
             
         except Exception as e:
-            logger.error(f"Erro inesperado ao parsear resposta do {self.llm_provider.upper()}: {e}")
-            logger.error(f"Resposta original: {response_text[:200]}...")
+            logger.error(f"Erro inesperado ao parsear resposta do Gemini: {e}")
+            logger.error(f"Resposta original: {response_text[:5000]}...")
             return self._create_error_response(f"Erro interno: {str(e)}")
     
     def _clean_json_response(self, response_text: str) -> str:
@@ -926,7 +1099,7 @@ class PlanningModule:
                 pass
         
         logger.warning("Não foi possível extrair JSON válido da resposta")
-        logger.debug(f"Texto original: {response_text[:300]}...")
+        logger.debug(f"Texto original: {response_text[:5000]}...")
         
         # Retornar JSON de erro como fallback
         return json.dumps({

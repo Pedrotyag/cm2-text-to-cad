@@ -557,7 +557,7 @@ except Exception as e:
             # Executar com timeout
             logger.debug(f"Criando subprocess Python para executar {temp_file}")
             process = await asyncio.create_subprocess_exec(
-                'python', temp_file,
+                'python3', temp_file,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=tempfile.gettempdir()

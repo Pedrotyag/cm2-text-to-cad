@@ -319,11 +319,19 @@ class CM2App {
         if (modelState && typeof modelState === 'object') {
             console.log('🎨 Modelo recebido via model_state, removendo overlay e carregando modelo...');
             console.log('🔍 Dados do model_state:', modelState);
+            console.log('🔍 Chaves do model_state:', Object.keys(modelState));
+            console.log('🔍 Tem mesh_data?', !!modelState.mesh_data);
+            if (modelState.mesh_data) {
+                console.log('🔍 Chaves do mesh_data:', Object.keys(modelState.mesh_data));
+                console.log('🔍 Tem data_base64?', !!modelState.mesh_data.data_base64);
+                console.log('🔍 Tamanho do data_base64:', modelState.mesh_data.data_base64?.length || 'N/A');
+            }
             this.hideViewportOverlay();
             if (modelState.code) {
                 this.threeSetup.loadModel(modelState.code);
             } else {
                 // Se não há código mas há dados do modelo, usar updateModel
+                console.log('🚀 Chamando threeSetup.updateModel com:', modelState);
                 this.threeSetup.updateModel(modelState);
             }
         } else {
