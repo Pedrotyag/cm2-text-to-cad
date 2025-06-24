@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🚀 Benchmark Test - Text-to-CAD</title>
+    <link rel="stylesheet" href="/static/css/style.css?v=20250621">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
+    
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+            overflow-x: hidden;
+            overflow-y: auto;
+        }
+
+        .header {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 2px 20px rgba(0,0,0,0.1);
+        }
+
+        .header h1 {
+            color: #2d3748;
+            margin-bottom: 10px;
+            font-size: 2.5rem;
+        }
+
+        .controls {
+            background: rgba(255, 255, 255, 0.9);
+            padding: 20px;
+            margin: 20px;
+            border-radius: 12px;
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
+        }
+
+        .test-cases {
+            display: flex;
+            flex-direction: column;
+            gap: 30px;
+            padding: 20px;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding-bottom: 60px;
+        }
+
+        .test-case {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+        }
+
+        .test-case-header {
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .test-case-title {
+            font-size: 1.5rem;
+            color: #2d3748;
+            margin-bottom: 8px;
+        }
+
+        .test-case-description {
+            color: #4a5568;
+            margin-bottom: 12px;
+        }
+
+        .test-case-prompt {
+            background: #f7fafc;
+            padding: 12px;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 14px;
+            color: #2d3748;
+            border-left: 4px solid #667eea;
+        }
+
+        .comparison-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .viewport-container {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 16px;
+            position: relative;
+        }
+
+        .viewport-header {
+            text-align: center;
+            margin-bottom: 12px;
+            font-weight: 600;
+            color: #2d3748;
+        }
+
+        .viewport-3d {
+            width: 100%;
+            height: 300px;
+            border-radius: 8px;
+            overflow: hidden;
+            position: relative;
+            background: #ffffff;
+            border: 2px solid #e2e8f0;
+        }
+
+        /* OVERLAY VIEWPORT (IGUAL AO INDEX.HTML) */
+        .viewport-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.95);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+            border-radius: 8px;
+        }
+
+        .no-model-message {
+            text-align: center;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .status-indicator {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            z-index: 100;
+        }
+
+        .status-loading { background: #ffd700; color: #8b7000; }
+        .status-success { background: #48bb78; color: white; }
+        .status-error { background: #f56565; color: white; }
+
+        .connection-status {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 12px 20px;
+            border-radius: 25px;
+            font-weight: 600;
+            z-index: 1000;
+        }
+
+        .connected { background: #48bb78; color: white; }
+        .disconnected { background: #f56565; color: white; }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <div class="header">
+        <h1>🚀 Benchmark Test - Text-to-CAD</h1>
+        <p>Sistema de teste e comparação automática entre LLM e Ground Truth</p>
+    </div>
+
+    <!-- Connection Status -->
+    <div id="connection-status" class="connection-status disconnected">🔌 Desconectado</div>
+
+    <!-- Controls -->
+    <div class="controls">
+        <button id="run-all-tests" class="btn">🤖 Executar Testes LLM</button>
+        <button id="clear-results" class="btn">🧹 Limpar Resultados</button>
+        <button id="export-results" class="btn">📊 Exportar Resultados</button>
+        <button id="debug-elements" class="btn" onclick="window.benchmarkManager.debugElements()">🔍 Debug Elementos</button>
+    </div>
+
+    <!-- Test Cases Container -->
+    <div id="test-cases" class="test-cases">
+        <!-- Os casos de teste serão carregados dinamicamente aqui -->
+    </div>
+
+    <!-- Scripts -->
+    <script src="/static/js/three-setup.js"></script>
+    <script src="/static/js/benchmark/case-loader.js"></script>
+    <script src="/static/js/benchmark/websocket-client.js"></script>
+    <script src="/static/js/benchmark/three-renderer.js"></script>
+    <script>
+        // Gerenciador principal do benchmark
+        class BenchmarkManager {
+            constructor() {
+                this.testResults = new Map();
+                this.currentTest = null;
+                this.isRunning = false;
+            }
+
+            async init() {
+                try {
+                    console.log('🔄 Carregando casos de teste...');
+                    await window.benchmarkLoader.loadAllCases();
+                    console.log('📦 Casos carregados:', window.benchmarkLoader.getAllCases().length);
+                    
+                    this.renderTestCases();
+                    console.log('🎨 Interface renderizada');
+                    
+                    await this.connectWebSocket();
+                    console.log('🔌 WebSocket conectado');
+                    
+                    this.setupEventListeners();
+                    console.log('🎛️ Event listeners configurados');
+                    
+                    console.log('✅ Benchmark Manager inicializado com sucesso');
+                } catch (error) {
+                    console.error('❌ Erro ao inicializar benchmark:', error);
+                    alert(`Erro ao carregar benchmark: ${error.message}\nVerifique o console para mais detalhes.`);
+                }
+            }
+
+            async connectWebSocket() {
+                try {
+                    await window.benchmarkWebSocket.connect({
+                        onOpen: () => {
+                            document.getElementById('connection-status').textContent = '✅ Conectado';
+                            document.getElementById('connection-status').className = 'connection-status connected';
+                        },
+                        onClose: () => {
+                            document.getElementById('connection-status').textContent = '🔌 Desconectado';
+                            document.getElementById('connection-status').className = 'connection-status disconnected';
+                        },
+                        onMessage: (data) => this.handleWebSocketMessage(data)
+                    });
+                } catch (error) {
+                    console.error('❌ Erro ao conectar WebSocket:', error);
+                }
+            }
+
+            renderTestCases() {
+                const container = document.getElementById('test-cases');
+                const cases = window.benchmarkLoader.getAllCases()
+                    .sort((a, b) => {
+                        // Ordenar por número no ID (case-01, case-02, etc.)
+                        const numA = parseInt(a.id.split('-')[1]);
+                        const numB = parseInt(b.id.split('-')[1]);
+                        return numA - numB;
+                    });
+                
+                container.innerHTML = cases.map(testCase => `
+                    <div class="test-case" data-case-id="${testCase.id}">
+                        <div class="test-case-header">
+                            <h3 class="test-case-title">${testCase.name}</h3>
+                            <p class="test-case-description">${testCase.description}</p>
+                            <div class="test-case-prompt">${testCase.prompt}</div>
+                        </div>
+                        
+                        <div style="margin-bottom: 16px; text-align: center;">
+                            <button class="btn" onclick="window.benchmarkManager.runSingleTest('${testCase.id}')" style="font-size: 14px; padding: 8px 16px; margin-right: 8px;">
+                                🤖 Testar LLM
+                            </button>
+                            <button class="btn" onclick="window.benchmarkManager.reloadGroundTruth('${testCase.id}')" style="font-size: 14px; padding: 8px 16px; background: #28a745;">
+                                🔄 Recarregar GT
+                            </button>
+                        </div>
+                        
+                        <div class="comparison-container">
+                            <div class="viewport-container">
+                                <div class="viewport-header">🤖 Resultado do LLM</div>
+                                <div class="viewport-3d" id="llm-viewport-${testCase.id}">
+                                    <div class="viewport-overlay" id="llm-overlay-${testCase.id}">
+                                        <div class="no-model-message">
+                                            <p>🤖 Aguardando resultado do LLM...</p>
+                                        </div>
+                                    </div>
+                                    <div class="status-indicator status-loading" id="llm-status-${testCase.id}">⏳ Aguardando</div>
+                                </div>
+                            </div>
+                            
+                            <div class="viewport-container">
+                                <div class="viewport-header">⚙️ Ground Truth</div>
+                                <div class="viewport-3d" id="gt-viewport-${testCase.id}">
+                                    <div class="viewport-overlay" id="gt-overlay-${testCase.id}">
+                                        <div class="no-model-message">
+                                            <p>⚙️ Carregando Ground Truth...</p>
+                                        </div>
+                                    </div>
+                                    <div class="status-indicator status-loading" id="gt-status-${testCase.id}">⏳ Aguardando</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+
+                // Inicializar viewports 3D após um pequeno delay para garantir que o DOM foi atualizado
+                setTimeout(() => {
+                    cases.forEach(testCase => {
+                        console.log(`🎨 Inicializando viewports para ${testCase.id}`);
+                        
+                        // Verificar se os elementos existem
+                        const llmViewport = document.getElementById(`llm-viewport-${testCase.id}`);
+                        const gtViewport = document.getElementById(`gt-viewport-${testCase.id}`);
+                        const llmStatus = document.getElementById(`llm-status-${testCase.id}`);
+                        const gtStatus = document.getElementById(`gt-status-${testCase.id}`);
+                        
+                        console.log(`🔍 Elementos encontrados para ${testCase.id}:`, {
+                            llmViewport: !!llmViewport,
+                            gtViewport: !!gtViewport, 
+                            llmStatus: !!llmStatus,
+                            gtStatus: !!gtStatus
+                        });
+                        
+                        // DEBUG adicional - mostrar se os elementos de status estão realmente na DOM
+                        if (!llmStatus) {
+                            console.error(`❌ llm-status-${testCase.id} não encontrado no DOM`);
+                            console.log('DOM atual:', document.getElementById(`llm-viewport-${testCase.id}`)?.innerHTML);
+                        }
+                        if (!gtStatus) {
+                            console.error(`❌ gt-status-${testCase.id} não encontrado no DOM`);  
+                            console.log('DOM atual:', document.getElementById(`gt-viewport-${testCase.id}`)?.innerHTML);
+                        }
+                        
+                        if (llmViewport) {
+                            try {
+                                window.benchmarkRenderer.initViewport(`llm-viewport-${testCase.id}`, 'llm');
+                            } catch (error) {
+                                console.error(`❌ Erro ao inicializar LLM viewport para ${testCase.id}:`, error);
+                            }
+                        }
+                        if (gtViewport) {
+                            try {
+                                window.benchmarkRenderer.initViewport(`gt-viewport-${testCase.id}`, 'gt');
+                            } catch (error) {
+                                console.error(`❌ Erro ao inicializar GT viewport para ${testCase.id}:`, error);
+                            }
+                        }
+                    });
+                    
+                    // 🎯 CARREGAR TODOS OS GROUND TRUTHS APÓS VIEWPORTS INICIALIZADOS
+                    console.log('🎯 Carregando Ground Truths automaticamente...');
+                    setTimeout(() => {
+                        window.benchmarkManager.loadAllGroundTruths();
+                    }, 200); // Aguardar mais um pouco para garantir que as cenas estão criadas
+                    
+                }, 100);
+            }
+
+            setupEventListeners() {
+                document.getElementById('run-all-tests').addEventListener('click', () => this.runAllLLMTests());
+                document.getElementById('clear-results').addEventListener('click', () => this.clearResults());
+                document.getElementById('export-results').addEventListener('click', () => this.exportResults());
+            }
+
+            // 🎯 Carregar todos os Ground Truths automaticamente
+            async loadAllGroundTruths() {
+                const cases = window.benchmarkLoader.getAllCases();
+                
+                console.log('🎯 Iniciando carregamento automático de Ground Truths...');
+                
+                // 🚀 ESTRATÉGIA INTELIGENTE: Se API não está respondendo, usar placeholders imediatamente
+                const canUseAPI = window.benchmarkWebSocket.isConnected;
+                console.log(`🔍 API disponível: ${canUseAPI}`);
+                
+                if (!canUseAPI) {
+                    // Carregar todos os placeholders imediatamente
+                    console.log('⚡ Carregando placeholders diretamente (API indisponível)');
+                    cases.forEach(testCase => {
+                        this.loadGroundTruthPlaceholderDirect(testCase);
+                    });
+                } else {
+                    // Tentar API com timeout curto
+                    const groundTruthPromises = cases.map(testCase => 
+                        this.executeGroundTruthAutomatic(testCase)
+                    );
+                    
+                    try {
+                        await Promise.all(groundTruthPromises);
+                    } catch (error) {
+                        console.error('❌ Erro ao carregar Ground Truths automaticamente:', error);
+                    }
+                }
+                
+                console.log('✅ Todos os Ground Truths carregados automaticamente!');
+            }
+            
+            // Carregar placeholder diretamente (sem API)
+            loadGroundTruthPlaceholderDirect(testCase) {
+                const statusEl = document.getElementById(`gt-status-${testCase.id}`);
+                const viewportId = `gt-viewport-${testCase.id}`;
+                
+                if (!statusEl) {
+                    console.error(`❌ Elemento gt-status-${testCase.id} não encontrado`);
+                    return;
+                }
+                
+                console.log(`⚡ Carregando modelo direto: ${testCase.name}`);
+                
+                statusEl.textContent = '✅ Carregado';
+                statusEl.className = 'status-indicator status-success';
+                
+                // 🎯 Carregar modelo específico para este caso de teste
+                window.benchmarkRenderer.loadGroundTruthModel(viewportId, testCase.id);
+                
+                console.log(`✅ Ground Truth carregado: ${testCase.name}`);
+            }
+
+            // Execução automática do Ground Truth (sem aguardar clique)
+            async executeGroundTruthAutomatic(testCase) {
+                const statusEl = document.getElementById(`gt-status-${testCase.id}`);
+                if (!statusEl) {
+                    console.error(`❌ Elemento gt-status-${testCase.id} não encontrado para carregamento automático`);
+                    return;
+                }
+                
+                console.log(`🎯 Executando Ground Truth Code: ${testCase.name}`);
+                statusEl.textContent = '⏳ Executando...';
+                statusEl.className = 'status-indicator status-loading';
+                
+                try {
+                    // 🚀 EXECUTAR GROUND TRUTH CODE REAL VIA API
+                    const response = await fetch('/api/execute_groundtruth', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            case_id: testCase.id,
+                            ground_truth_code: testCase.groundTruthCode
+                        })
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`Erro HTTP ${response.status}`);
+                    }
+                    
+                    const result = await response.json();
+                    
+                    if (result.success && result.mesh_data) {
+                        console.log(`✅ Ground Truth executado com sucesso: ${testCase.name}`);
+                        
+                        // Renderizar mesh real no viewport
+                        const viewportId = `gt-viewport-${testCase.id}`;
+                        await window.benchmarkRenderer.renderRealMesh(viewportId, result.mesh_data, testCase);
+                        
+                        statusEl.textContent = '✅ Executado';
+                        statusEl.className = 'status-indicator status-success';
+                    } else {
+                        throw new Error(result.error || 'Erro desconhecido');
+                    }
+                    
+                } catch (error) {
+                    console.error(`❌ Erro ao carregar Ground Truth automaticamente ${testCase.name}:`, error);
+                    statusEl.textContent = '❌ Erro';
+                    statusEl.className = 'status-indicator status-error';
+                    window.benchmarkRenderer.loadPlaceholderModel(`gt-viewport-${testCase.id}`, 'error');
+                }
+            }
+            
+            // Gerar modelo Ground Truth via API
+            async generateGroundTruthModel(testCase) {
+                const statusEl = document.getElementById(`gt-status-${testCase.id}`);
+                const viewportId = `gt-viewport-${testCase.id}`;
+                
+                // 🚀 OTIMIZAÇÃO: Primeiro tentar placeholder diretamente se API não está configurada
+                if (!window.benchmarkWebSocket.isConnected) {
+                    console.log(`⚡ WebSocket não conectado para ${testCase.name}, usando placeholder diretamente`);
+                    this.loadGroundTruthPlaceholder(testCase, statusEl, viewportId);
+                    return;
+                }
+                
+                try {
+                    // Tentar executar via WebSocket (mesma API do sistema principal)
+                    statusEl.textContent = '🔄 Executando...';
+                    statusEl.className = 'status-indicator status-loading';
+                    
+                    const success = await this.executeGroundTruthViaAPI(testCase);
+                    
+                    if (success) {
+                        statusEl.textContent = '✅ Carregado';
+                        statusEl.className = 'status-indicator status-success';
+                        console.log(`✅ Ground Truth carregado via API: ${testCase.name}`);
+                    } else {
+                        throw new Error('Falha na execução via API');
+                    }
+                    
+                } catch (error) {
+                    console.log(`⚠️ API falhou para ${testCase.name}, usando placeholder`);
+                    this.loadGroundTruthPlaceholder(testCase, statusEl, viewportId);
+                }
+            }
+            
+            // Carregar placeholder para Ground Truth
+            loadGroundTruthPlaceholder(testCase, statusEl, viewportId) {
+                statusEl.textContent = '✅ Simulado';
+                statusEl.className = 'status-indicator status-success';
+                
+                // 🎯 Carregar modelo específico para este caso de teste
+                window.benchmarkRenderer.loadGroundTruthModel(viewportId, testCase.id);
+                
+                console.log(`✅ Ground Truth simulado: ${testCase.name}`);
+            }
+            
+            // Executar Ground Truth via WebSocket API
+            async executeGroundTruthViaAPI(testCase) {
+                return new Promise((resolve) => {
+                    // ❌ DESABILITADO: NÃO enviar ground truth para LLM!
+                    // Isso vazaria as respostas corretas para o modelo
+                    console.log(`🚫 Ground Truth API desabilitado para ${testCase.name} (evitar vazamento)`);
+                    
+                    // Sempre falhar para forçar uso de placeholder
+                    setTimeout(() => {
+                        resolve(false);
+                    }, 100);
+                });
+            }
+
+            async runAllLLMTests() {
+                if (this.isRunning) return;
+                
+                this.isRunning = true;
+                const button = document.getElementById('run-all-tests');
+                button.textContent = '⏳ Executando LLM...';
+                button.disabled = true;
+                
+                const cases = window.benchmarkLoader.getAllCases();
+                
+                for (const testCase of cases) {
+                    console.log(`🤖 Executando teste LLM: ${testCase.name}`);
+                    await this.executeLLMTest(testCase);
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+                
+                this.isRunning = false;
+                button.textContent = '🤖 Executar Testes LLM';
+                button.disabled = false;
+                console.log('✅ Todos os testes LLM concluídos');
+            }
+
+            async runSingleTest(caseId) {
+                if (this.isRunning) return;
+                
+                const testCase = window.benchmarkLoader.getCaseById(caseId);
+                if (!testCase) {
+                    console.error(`❌ Caso ${caseId} não encontrado`);
+                    return;
+                }
+                
+                console.log(`🤖 Executando teste LLM individual: ${testCase.name}`);
+                await this.executeLLMTest(testCase);
+                console.log(`✅ Teste LLM ${testCase.name} concluído`);
+            }
+            
+            // Recarregar Ground Truth individual (se necessário)
+            async reloadGroundTruth(caseId) {
+                const testCase = window.benchmarkLoader.getCaseById(caseId);
+                if (!testCase) {
+                    console.error(`❌ Caso ${caseId} não encontrado`);
+                    return;
+                }
+                
+                console.log(`🔄 Recarregando Ground Truth: ${testCase.name}`);
+                await this.executeGroundTruthAutomatic(testCase);
+            }
+
+            async executeGroundTruth(testCase) {
+                const statusEl = document.getElementById(`gt-status-${testCase.id}`);
+                if (!statusEl) {
+                    console.error(`❌ Elemento gt-status-${testCase.id} não encontrado`);
+                    return;
+                }
+                
+                console.log(`🚀 Executando Ground Truth: ${testCase.name}`);
+                statusEl.textContent = '⏳ Executando...';
+                statusEl.className = 'status-indicator status-loading';
+                
+                try {
+                    // Mostrar placeholder de loading imediatamente
+                    window.benchmarkRenderer.loadPlaceholderModel(`gt-viewport-${testCase.id}`, 'loading');
+                    
+                    // Definir teste atual
+                    this.currentTest = { testCase, type: 'ground-truth' };
+                    
+                    // Enviar código para execução
+                    const message = `Execute este código CadQuery e retorne o modelo 3D como STL:\n\n${testCase.groundTruthCode}`;
+                    window.benchmarkWebSocket.sendUserMessage(message);
+                    
+                    // Aguardar resposta com timeout
+                    return new Promise((resolve) => {
+                        const timeout = setTimeout(() => {
+                            if (this.currentTest && this.currentTest.testCase.id === testCase.id) {
+                                statusEl.textContent = '⏰ Timeout';
+                                statusEl.className = 'status-indicator status-error';
+                                this.currentTest = null;
+                            }
+                            resolve();
+                        }, testCase.timeout);
+                        
+                        // Salvar o timeout para poder cancelar
+                        this.currentTest.timeout = timeout;
+                    });
+                    
+                } catch (error) {
+                    console.error('❌ Erro ao executar Ground Truth:', error);
+                    statusEl.textContent = '❌ Erro';
+                    statusEl.className = 'status-indicator status-error';
+                    window.benchmarkRenderer.loadPlaceholderModel(`gt-viewport-${testCase.id}`, 'error');
+                }
+            }
+
+            async executeLLMTest(testCase) {
+                const statusEl = document.getElementById(`llm-status-${testCase.id}`);
+                if (!statusEl) {
+                    console.error(`❌ Elemento llm-status-${testCase.id} não encontrado`);
+                    return;
+                }
+                
+                console.log(`🤖 Executando LLM: ${testCase.name}`);
+                statusEl.textContent = '⏳ Executando...';
+                statusEl.className = 'status-indicator status-loading';
+                
+                try {
+                    // Mostrar placeholder de loading imediatamente
+                    window.benchmarkRenderer.loadPlaceholderModel(`llm-viewport-${testCase.id}`, 'loading');
+                    
+                    // Definir teste atual
+                    this.currentTest = { testCase, type: 'llm' };
+                    
+                    // Enviar prompt para LLM
+                    window.benchmarkWebSocket.sendUserMessage(testCase.prompt);
+                    
+                    // Aguardar resposta com timeout
+                    return new Promise((resolve) => {
+                        const timeout = setTimeout(() => {
+                            if (this.currentTest && this.currentTest.testCase.id === testCase.id) {
+                                statusEl.textContent = '⏰ Timeout';
+                                statusEl.className = 'status-indicator status-error';
+                                this.currentTest = null;
+                            }
+                            resolve();
+                        }, testCase.timeout);
+                        
+                        // Salvar o timeout para poder cancelar
+                        this.currentTest.timeout = timeout;
+                    });
+                    
+                } catch (error) {
+                    console.error('❌ Erro ao executar teste LLM:', error);
+                    statusEl.textContent = '❌ Erro';
+                    statusEl.className = 'status-indicator status-error';
+                    window.benchmarkRenderer.loadPlaceholderModel(`llm-viewport-${testCase.id}`, 'error');
+                }
+            }
+
+            handleWebSocketMessage(data) {
+                if (!this.currentTest) return;
+                
+                console.log('📨 Mensagem WebSocket recebida:', data);
+                
+                const { testCase, type, timeout, resolve } = this.currentTest;
+                
+                if (data.type === 'system_response' && data.data) {
+                    const response = data.data;
+                    
+                    // Cancelar timeout
+                    if (timeout) {
+                        clearTimeout(timeout);
+                    }
+                    
+                    // Determinar viewport baseado no tipo
+                    let viewportId, statusId;
+                    if (type === 'llm') {
+                        viewportId = `llm-viewport-${testCase.id}`;
+                        statusId = `llm-status-${testCase.id}`;
+                    } else if (type === 'ground-truth' || type === 'ground-truth-auto') {
+                        viewportId = `gt-viewport-${testCase.id}`;
+                        statusId = `gt-status-${testCase.id}`;
+                    }
+                    
+                    const statusEl = document.getElementById(statusId);
+                    
+                    if (!statusEl) {
+                        console.error(`❌ Elemento ${statusId} não encontrado`);
+                        if (resolve) resolve(false);
+                        return;
+                    }
+                    
+                    if (response.stl_data) {
+                        // Carregar modelo 3D
+                        window.benchmarkRenderer.loadSTLModel(viewportId, response.stl_data)
+                            .then(() => {
+                                statusEl.textContent = '✅ Sucesso';
+                                statusEl.className = 'status-indicator status-success';
+                                console.log(`✅ ${type} ${testCase.name} - Modelo 3D carregado`);
+                                if (resolve) resolve(true);
+                            })
+                            .catch((error) => {
+                                console.error('❌ Erro ao carregar 3D:', error);
+                                statusEl.textContent = '❌ Erro 3D';
+                                statusEl.className = 'status-indicator status-error';
+                                window.benchmarkRenderer.loadPlaceholderModel(viewportId, 'error');
+                                if (resolve) resolve(false);
+                            });
+                    } else {
+                        // Sem modelo 3D
+                        statusEl.textContent = '⚠️ Sem 3D';
+                        statusEl.className = 'status-indicator status-error';
+                        window.benchmarkRenderer.loadPlaceholderModel(viewportId, 'error');
+                        console.log(`⚠️ ${type} ${testCase.name} - Sem dados 3D`);
+                        if (resolve) resolve(false);
+                    }
+                    
+                    // Limpar teste atual se não tem resolve (modo normal)
+                    if (!resolve) {
+                        this.currentTest = null;
+                    }
+                }
+            }
+
+            clearResults() {
+                const cases = window.benchmarkLoader.getAllCases();
+                cases.forEach(testCase => {
+                    // Limpar status LLM
+                    const llmStatus = document.getElementById(`llm-status-${testCase.id}`);
+                    if (llmStatus) {
+                        llmStatus.textContent = '⏳ Aguardando';
+                        llmStatus.className = 'status-indicator status-loading';
+                    }
+                    
+                    // Limpar status Ground Truth
+                    const gtStatus = document.getElementById(`gt-status-${testCase.id}`);
+                    if (gtStatus) {
+                        gtStatus.textContent = '⏳ Aguardando';
+                        gtStatus.className = 'status-indicator status-loading';
+                    }
+                    
+                    window.benchmarkRenderer.clearModels(`llm-viewport-${testCase.id}`);
+                    window.benchmarkRenderer.clearModels(`gt-viewport-${testCase.id}`);
+                    window.benchmarkRenderer.showMessage(`llm-viewport-${testCase.id}`, '🤖 Aguardando resultado do LLM...');
+                    window.benchmarkRenderer.showMessage(`gt-viewport-${testCase.id}`, '⚙️ Aguardando Ground Truth...');
+                });
+                
+                this.testResults.clear();
+                console.log('🧹 Resultados limpos');
+            }
+
+            exportResults() {
+                const results = Array.from(this.testResults.entries());
+                const blob = new Blob([JSON.stringify(results, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `benchmark-results-${new Date().toISOString().slice(0, 19)}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+            }
+
+            // Método de debug para testar elementos
+            debugElements() {
+                console.log('🔍 Debug dos elementos DOM:');
+                const cases = window.benchmarkLoader.getAllCases();
+                cases.forEach(testCase => {
+                    console.log(`📋 Caso: ${testCase.id}`);
+                    console.log(`  LLM Viewport: ${!!document.getElementById(`llm-viewport-${testCase.id}`)}`);
+                    console.log(`  LLM Status: ${!!document.getElementById(`llm-status-${testCase.id}`)}`);
+                    console.log(`  GT Viewport: ${!!document.getElementById(`gt-viewport-${testCase.id}`)}`);
+                    console.log(`  GT Status: ${!!document.getElementById(`gt-status-${testCase.id}`)}`);
+                });
+            }
+        }
+
+        // Inicializar quando página carregar
+        document.addEventListener('DOMContentLoaded', async () => {
+            const manager = new BenchmarkManager();
+            await manager.init();
+            window.benchmarkManager = manager;
+        });
+    </script>
+</body>
+</html> 
