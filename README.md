@@ -47,28 +47,18 @@ cd cm2-text-to-cad
 ### 2. Configuração do Backend
 ```bash
 # Criar ambiente virtual
-python -m venv env
-source env/bin/activate  # Linux/Mac
-# ou
-env\Scripts\activate     # Windows
+uv venv --python 3.10
+source .venv/bin/activate
 
 # Instalar dependências
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 
 # Configurar variáveis de ambiente
 cp .env.example .env
 # Editar .env com sua GEMINI_API_KEY
 ```
 
-### 3. Configuração do Frontend
-```bash
-cd frontend
-npm install
-npm run build
-cd ..
-```
-
-### 4. Executar o Sistema
+### 3. Executar o Sistema
 ```bash
 python main.py
 ```

@@ -11,6 +11,7 @@ from .dialog_manager import DialogManager
 from .planning_module import PlanningModule
 from .executor import SandboxedExecutor
 from .pig_manager import PIGManager
+from .edit_manager import EditManager
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,9 @@ class CentralOrchestrator:
         self.planning_module = PlanningModule()
         self.executor = SandboxedExecutor()
         self.pig_manager = PIGManager()
+        
+        # Novo: Gerenciador de Edições
+        self.edit_manager = EditManager(self.pig_manager, self.executor)
         
         self.current_session_id: Optional[str] = None
         self.is_processing = False
@@ -42,10 +46,11 @@ class CentralOrchestrator:
         return self.current_session_id
     
     async def process_user_input(
-        self, 
-        user_input: str, 
+        self,
+        user_input: str,
         selected_geometry: Optional[GeometrySelection] = None,
-        session_id: Optional[str] = None
+        session_id: Optional[str] = None,
+        selected_model: Optional[str] = None
     ) -> SystemResponse:
         """
         Processa entrada do usuário e orquestra resposta do sistema.
@@ -54,6 +59,7 @@ class CentralOrchestrator:
             user_input: Texto enviado pelo usuário
             selected_geometry: Geometria selecionada na UI (opcional)
             session_id: ID da sessão (usa atual se não especificado)
+            selected_model: Modelo selecionado para a requisição (opcional)
         """
         if self.is_processing:
             return SystemResponse(
@@ -94,7 +100,10 @@ class CentralOrchestrator:
             
             # 5. Se não é modificação paramétrica simples, consultar LLM
             response = await self._process_with_llm(
-                session_id, user_message, intention_result
+                session_id,
+                user_message,
+                intention_result,
+                selected_model
             )
             
             return response
@@ -160,7 +169,11 @@ class CentralOrchestrator:
             return None
     
     async def _process_with_llm(
-        self, session_id: str, user_message: UserMessage, intention_result
+        self,
+        session_id: str,
+        user_message: UserMessage,
+        intention_result,
+        selected_model: Optional[str] = None
     ) -> SystemResponse:
         """Processa requisição usando o módulo de planejamento (LLM)"""
         
@@ -176,7 +189,8 @@ class CentralOrchestrator:
             "current_model_state": model_state.model_dump() if model_state else None,
             "pig_state": pig_state,
             "selected_geometry": user_message.selected_geometry,
-            "intention_type": intention_result.intention_type.value
+            "intention_type": intention_result.intention_type.value,
+            "model_choice": selected_model or "gemini-2.5-flash"
         }
         
         # 3. Obter plano do LLM
@@ -321,5 +335,266 @@ class CentralOrchestrator:
             "model_state": model_state.model_dump() if model_state else None,
             "pig_state": pig_state,
             "is_processing": self.is_processing,
-            "last_execution_code": getattr(self, '_session_codes', {}).get(session_id)
-        } 
+            "last_execution_code": getattr(self, '_session_codes', {}).get(session_id),
+            "edit_capabilities": {
+                "can_load_previous": True,
+                "can_edit_code": True,
+                "can_edit_parameters": True,
+                "can_create_checkpoints": True,
+                "has_version_history": len(pig_state.get('version_history', [])) > 0
+            }
+        }
+    
+    # NEW EDIT FUNCTIONALITY METHODS
+    
+    async def load_for_editing(self, session_id: str, file_path: str = None) -> Dict[str, Any]:
+        """
+        Carrega uma geração anterior para edição
+        
+        Args:
+            session_id: ID da sessão
+            file_path: Caminho específico do arquivo (opcional)
+            
+        Returns:
+            SystemResponse com dados de edição
+        """
+        try:
+            result = await self.edit_manager.load_for_editing(session_id, file_path)
+            
+            if result.get('success'):
+                response = SystemResponse(
+                    content=f"Modelo carregado para edição: {result['data']['loaded_file']}",
+                    message_type="success",
+                    execution_plan=result['data']
+                )
+            else:
+                response = SystemResponse(
+                    content=f"Erro ao carregar modelo: {result.get('error')}",
+                    message_type="error"
+                )
+            
+            await self.dialog_manager.add_message(session_id, response)
+            return result
+            
+        except Exception as e:
+            logger.error(f"Erro no carregamento para edição: {e}")
+            return {"success": False, "error": str(e)}
+    
+    async def edit_code_directly(self, session_id: str, 
+                               operation_id: str, 
+                               new_code: str,
+                               auto_regenerate: bool = True) -> Dict[str, Any]:
+        """
+        Edita código CadQuery diretamente
+        
+        Args:
+            session_id: ID da sessão
+            operation_id: ID da operação
+            new_code: Novo código CadQuery
+            auto_regenerate: Se deve regenerar automaticamente
+            
+        Returns:
+            Resultado da edição
+        """
+        try:
+            result = await self.edit_manager.edit_code_directly(
+                session_id, operation_id, new_code, auto_regenerate
+            )
+            
+            if result.get('success'):
+                # Atualizar estado do modelo se regenerado
+                if auto_regenerate and result.get('regeneration_result', {}).get('success'):
+                    model_data = result['regeneration_result'].get('model_data')
+                    if model_data:
+                        await self.dialog_manager.update_model_state(session_id, model_data)
+                
+                response = SystemResponse(
+                    content=f"Código editado com sucesso. {len(result.get('affected_nodes', []))} nós afetados.",
+                    message_type="success",
+                    model_state=result.get('regeneration_result', {}).get('model_data')
+                )
+            else:
+                response = SystemResponse(
+                    content=f"Erro na edição: {result.get('error')}",
+                    message_type="error"
+                )
+            
+            await self.dialog_manager.add_message(session_id, response)
+            return result
+            
+        except Exception as e:
+            logger.error(f"Erro na edição direta: {e}")
+            return {"success": False, "error": str(e)}
+    
+    async def update_parameters_batch(self, session_id: str, 
+                                    parameter_updates: Dict[str, Any],
+                                    auto_regenerate: bool = True) -> Dict[str, Any]:
+        """
+        Atualiza múltiplos parâmetros
+        
+        Args:
+            session_id: ID da sessão
+            parameter_updates: Parâmetros para atualizar
+            auto_regenerate: Se deve regenerar automaticamente
+            
+        Returns:
+            Resultado da atualização
+        """
+        try:
+            result = await self.edit_manager.update_parameters_batch(
+                session_id, parameter_updates, auto_regenerate
+            )
+            
+            if result.get('success'):
+                # Atualizar estado do modelo se regenerado
+                if auto_regenerate and result.get('regeneration_result', {}).get('success'):
+                    model_data = result['regeneration_result'].get('model_data')
+                    if model_data:
+                        await self.dialog_manager.update_model_state(session_id, model_data)
+                
+                updated_params = result.get('updated_parameters', [])
+                response = SystemResponse(
+                    content=f"Parâmetros atualizados: {', '.join(updated_params)}",
+                    message_type="success",
+                    model_state=result.get('regeneration_result', {}).get('model_data')
+                )
+            else:
+                response = SystemResponse(
+                    content=f"Erro na atualização: {result.get('error')}",
+                    message_type="error"
+                )
+            
+            await self.dialog_manager.add_message(session_id, response)
+            return result
+            
+        except Exception as e:
+            logger.error(f"Erro na atualização de parâmetros: {e}")
+            return {"success": False, "error": str(e)}
+    
+    async def create_checkpoint(self, session_id: str, description: str = None) -> Dict[str, Any]:
+        """
+        Cria checkpoint de versão
+        
+        Args:
+            session_id: ID da sessão
+            description: Descrição do checkpoint
+            
+        Returns:
+            Resultado da criação do checkpoint
+        """
+        try:
+            result = await self.edit_manager.create_checkpoint(session_id, description)
+            
+            if result.get('success'):
+                response = SystemResponse(
+                    content=f"Checkpoint criado: {result.get('checkpoint_id')}",
+                    message_type="success"
+                )
+            else:
+                response = SystemResponse(
+                    content=f"Erro ao criar checkpoint: {result.get('error')}",
+                    message_type="error"
+                )
+            
+            await self.dialog_manager.add_message(session_id, response)
+            return result
+            
+        except Exception as e:
+            logger.error(f"Erro ao criar checkpoint: {e}")
+            return {"success": False, "error": str(e)}
+    
+    async def rollback_to_checkpoint(self, session_id: str, checkpoint_id: str) -> Dict[str, Any]:
+        """
+        Faz rollback para checkpoint
+        
+        Args:
+            session_id: ID da sessão
+            checkpoint_id: ID do checkpoint
+            
+        Returns:
+            Resultado do rollback
+        """
+        try:
+            result = await self.edit_manager.rollback_to_checkpoint(session_id, checkpoint_id)
+            
+            if result.get('success'):
+                # Atualizar estado do modelo após rollback
+                if result.get('regeneration_result', {}).get('success'):
+                    model_data = result['regeneration_result'].get('model_data')
+                    if model_data:
+                        await self.dialog_manager.update_model_state(session_id, model_data)
+                
+                response = SystemResponse(
+                    content=f"Rollback realizado para checkpoint {checkpoint_id}",
+                    message_type="success",
+                    model_state=result.get('regeneration_result', {}).get('model_data')
+                )
+            else:
+                response = SystemResponse(
+                    content=f"Erro no rollback: {result.get('error')}",
+                    message_type="error"
+                )
+            
+            await self.dialog_manager.add_message(session_id, response)
+            return result
+            
+        except Exception as e:
+            logger.error(f"Erro no rollback: {e}")
+            return {"success": False, "error": str(e)}
+    
+    async def get_edit_history(self, session_id: str) -> Dict[str, Any]:
+        """
+        Retorna histórico de edições
+        
+        Args:
+            session_id: ID da sessão
+            
+        Returns:
+            Histórico de edições
+        """
+        try:
+            return await self.edit_manager.get_edit_history(session_id)
+            
+        except Exception as e:
+            logger.error(f"Erro ao obter histórico: {e}")
+            return {"success": False, "error": str(e)}
+    
+    async def get_editable_content(self, session_id: str) -> Dict[str, Any]:
+        """
+        Retorna conteúdo editável
+        
+        Args:
+            session_id: ID da sessão
+            
+        Returns:
+            Conteúdo editável
+        """
+        try:
+            return await self.edit_manager.get_editable_content(session_id)
+            
+        except Exception as e:
+            logger.error(f"Erro ao obter conteúdo editável: {e}")
+            return {"success": False, "error": str(e)}
+    
+    async def validate_edit(self, session_id: str, 
+                          edited_code: str = None,
+                          parameter_updates: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Valida edições antes de aplicar
+        
+        Args:
+            session_id: ID da sessão
+            edited_code: Código editado (opcional)
+            parameter_updates: Parâmetros atualizados (opcional)
+            
+        Returns:
+            Resultado da validação
+        """
+        try:
+            return await self.edit_manager.validate_edit(
+                session_id, edited_code, parameter_updates
+            )
+            
+        except Exception as e:
+            logger.error(f"Erro na validação: {e}")
+            return {"success": False, "error": str(e)} 

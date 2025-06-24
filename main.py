@@ -16,7 +16,7 @@ from src.models import GeometrySelection
 from src.core.planning_module import safe_json_dumps
 
 # Configurar logging
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Inicializar FastAPI
@@ -47,6 +47,7 @@ class UserInputRequest(BaseModel):
     message: str
     selected_geometry: Optional[Dict[str, Any]] = None
     session_id: Optional[str] = None
+    selected_model: Optional[str] = None
 
 class SessionResponse(BaseModel):
     session_id: str
@@ -136,7 +137,15 @@ async def start_session():
     """Inicia uma nova sessão de design"""
     try:
         session_id = await orchestrator.start_session()
-        return SessionResponse(session_id=session_id, status="success")
+        
+        # Obter informações do modelo atual
+        model_info = await get_current_model_info()
+        
+        return {
+            "session_id": session_id, 
+            "status": "success",
+            "model_info": model_info
+        }
     except Exception as e:
         logger.error(f"Erro ao iniciar sessão: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -150,16 +159,23 @@ async def send_message(request: UserInputRequest):
         if request.selected_geometry:
             selected_geometry = GeometrySelection(**request.selected_geometry)
         
+        selected_model = request.selected_model
+        
         # Processar mensagem
         response = await orchestrator.process_user_input(
             user_input=request.message,
             selected_geometry=selected_geometry,
-            session_id=request.session_id
+            session_id=request.session_id,
+            selected_model=selected_model
         )
+        
+        # Obter informações do modelo atual
+        model_info = await get_current_model_info()
         
         return {
             "response": response.model_dump(),
-            "session_id": request.session_id or orchestrator.current_session_id
+            "session_id": request.session_id or orchestrator.current_session_id,
+            "model_info": model_info
         }
         
     except Exception as e:
@@ -171,6 +187,14 @@ async def get_session_state(session_id: str):
     """Retorna estado completo da sessão"""
     try:
         state = await orchestrator.get_session_state(session_id)
+        model_info = await get_current_model_info()
+        
+        # Adicionar informações do modelo ao estado
+        if isinstance(state, dict):
+            state["model_info"] = model_info
+        else:
+            state = {"state": state, "model_info": model_info}
+            
         return state
     except Exception as e:
         logger.error(f"Erro ao obter estado da sessão: {e}")
@@ -202,6 +226,13 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     await manager.connect(websocket, session_id)
     
     try:
+        # Enviar informações do modelo logo após conectar
+        model_info = await get_current_model_info()
+        await manager.send_personal_message({
+            "type": "model_info",
+            "model_info": model_info
+        }, session_id)
+        
         while True:
             # Receber mensagem do cliente
             data = await websocket.receive_text()
@@ -214,6 +245,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 # Processar mensagem do usuário
                 user_input = message_data.get("content", "")
                 selected_geometry = message_data.get("selected_geometry")
+                selected_model = message_data.get("selected_model")
                 
                 logger.info(f"Processando mensagem do usuário: '{user_input}' na sessão {session_id}")
                 
@@ -228,7 +260,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 response = await orchestrator.process_user_input(
                     user_input=user_input,
                     selected_geometry=geometry_selection,
-                    session_id=session_id
+                    session_id=session_id,
+                    selected_model=selected_model
                 )
                 logger.info(f"Resposta recebida do orquestrador: {type(response)}")
                 
@@ -242,11 +275,15 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     logger.error(f"Atributos da resposta: {dir(response)}")
                     raise
                 
-                # Enviar resposta
+                # Obter informações atualizadas do modelo
+                current_model_info = await get_current_model_info()
+                
+                # Enviar resposta com informações do modelo
                 logger.info(f"Enviando resposta via WebSocket")
                 await manager.send_personal_message({
                     "type": "system_response",
-                    "data": response_data
+                    "response": response_data,
+                    "model_info": current_model_info
                 }, session_id)
                 
             elif message_type == "parameter_update":
@@ -267,29 +304,33 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                             session_id, affected_nodes, pig
                         )
                         
+                        # Obter informações do modelo
+                        model_info = await get_current_model_info()
+                        
                         # Enviar resultado
                         await manager.send_personal_message({
-                            "type": "parameter_updated",
-                            "data": {
-                                "parameter_name": param_name,
-                                "new_value": new_value,
-                                "execution_result": execution_result.model_dump(),
-                                "affected_nodes": affected_nodes
-                            }
+                            "type": "parameter_update",
+                            "parameter_name": param_name,
+                            "new_value": new_value,
+                            "execution_result": execution_result.model_dump(),
+                            "affected_nodes": affected_nodes,
+                            "model_info": model_info
                         }, session_id)
                         
                     except Exception as e:
                         await manager.send_personal_message({
                             "type": "error",
-                            "data": {"message": str(e)}
+                            "message": str(e)
                         }, session_id)
             
             elif message_type == "get_state":
                 # Solicitar estado atual
                 state = await orchestrator.get_session_state(session_id)
+                model_info = await get_current_model_info()
                 await manager.send_personal_message({
                     "type": "session_state",
-                    "data": state
+                    "state": state,
+                    "model_info": model_info
                 }, session_id)
                 
     except WebSocketDisconnect:
@@ -525,6 +566,171 @@ except Exception as e:
 async def health_check():
     """Endpoint de verificação de saúde"""
     return {"status": "healthy", "service": "CM² Text-to-CAD"}
+
+# Models para as novas funcionalidades de edição
+class LoadForEditingRequest(BaseModel):
+    session_id: str
+    file_path: Optional[str] = None
+
+class EditCodeRequest(BaseModel):
+    session_id: str
+    operation_id: str
+    new_code: str
+    auto_regenerate: bool = True
+
+class UpdateParametersRequest(BaseModel):
+    session_id: str
+    parameter_updates: Dict[str, Any]
+    auto_regenerate: bool = True
+
+class CreateCheckpointRequest(BaseModel):
+    session_id: str
+    description: Optional[str] = None
+
+class RollbackRequest(BaseModel):
+    session_id: str
+    checkpoint_id: str
+
+class ValidateEditRequest(BaseModel):
+    session_id: str
+    edited_code: Optional[str] = None
+    parameter_updates: Optional[Dict[str, Any]] = None
+
+# Endpoints para funcionalidades de edição
+@app.post("/api/edit/load")
+async def load_for_editing(request: LoadForEditingRequest):
+    """Carrega uma geração anterior para edição"""
+    try:
+        result = await orchestrator.load_for_editing(
+            request.session_id, 
+            request.file_path
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Erro ao carregar para edição: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/edit/code")
+async def edit_code_directly(request: EditCodeRequest):
+    """Edita código CadQuery diretamente"""
+    try:
+        result = await orchestrator.edit_code_directly(
+            request.session_id,
+            request.operation_id,
+            request.new_code,
+            request.auto_regenerate
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Erro na edição de código: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/edit/parameters")
+async def update_parameters_batch(request: UpdateParametersRequest):
+    """Atualiza múltiplos parâmetros de uma vez"""
+    try:
+        result = await orchestrator.update_parameters_batch(
+            request.session_id,
+            request.parameter_updates,
+            request.auto_regenerate
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Erro na atualização de parâmetros: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/edit/checkpoint")
+async def create_checkpoint(request: CreateCheckpointRequest):
+    """Cria um checkpoint de versão"""
+    try:
+        result = await orchestrator.create_checkpoint(
+            request.session_id,
+            request.description
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Erro ao criar checkpoint: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/edit/rollback")
+async def rollback_to_checkpoint(request: RollbackRequest):
+    """Faz rollback para um checkpoint específico"""
+    try:
+        result = await orchestrator.rollback_to_checkpoint(
+            request.session_id,
+            request.checkpoint_id
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Erro no rollback: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/edit/history/{session_id}")
+async def get_edit_history(session_id: str):
+    """Retorna histórico de edições da sessão"""
+    try:
+        result = await orchestrator.get_edit_history(session_id)
+        return result
+    except Exception as e:
+        logger.error(f"Erro ao obter histórico: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/edit/content/{session_id}")
+async def get_editable_content(session_id: str):
+    """Retorna conteúdo editável atual da sessão"""
+    try:
+        result = await orchestrator.get_editable_content(session_id)
+        return result
+    except Exception as e:
+        logger.error(f"Erro ao obter conteúdo editável: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/edit/validate")
+async def validate_edit(request: ValidateEditRequest):
+    """Valida edições antes de aplicar"""
+    try:
+        result = await orchestrator.validate_edit(
+            request.session_id,
+            request.edited_code,
+            request.parameter_updates
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Erro na validação: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/model/info")
+async def get_model_info():
+    """Retorna informações sobre o modelo atual"""
+    try:
+        model_info = await get_current_model_info()
+        return model_info
+    except Exception as e:
+        logger.error(f"Erro ao obter informações do modelo: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def get_current_model_info():
+    """Função auxiliar para obter informações do modelo atual"""
+    try:
+        planning_module = orchestrator.planning_module
+        
+        return {
+            "provider": planning_module.llm_provider.upper(),
+            "model_name": planning_module.current_model_name,
+            "base_url": planning_module.ollama_base_url if planning_module.llm_provider == "ollama" else "https://generativelanguage.googleapis.com",
+            "is_local": planning_module.llm_provider == "ollama",
+            "status": "active"
+        }
+    except Exception as e:
+        logger.error(f"Erro ao obter informações do modelo: {e}")
+        return {
+            "provider": "UNKNOWN",
+            "model_name": "unknown",
+            "base_url": "unknown",
+            "is_local": False,
+            "status": "error",
+            "error": str(e)
+        }
 
 if __name__ == "__main__":
     # Verificar variáveis de ambiente obrigatórias
